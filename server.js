@@ -8,7 +8,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Configuration ───
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 const CACHE_TTL = parseInt(process.env.CACHE_TTL || '600') * 1000; // ms
 const MIN_USD = parseFloat(process.env.MIN_USD_VALUE || '1000');
 

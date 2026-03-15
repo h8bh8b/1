@@ -5,14 +5,14 @@ const COINGECKO_API = "https://api.coingecko.com/api/v3";
 const MORALIS_API = "https://deep-index.moralis.io/api/v2.2";
 
 // Supported chains
-const CHAINS: Record<string, { id: string; name: string; symbol: string; coingeckoId: string }> = {
-  eth: { id: "0x1", name: "Ethereum", symbol: "ETH", coingeckoId: "ethereum" },
-  bsc: { id: "0x38", name: "BNB Chain", symbol: "BNB", coingeckoId: "binancecoin" },
-  polygon: { id: "0x89", name: "Polygon", symbol: "MATIC", coingeckoId: "matic-network" },
-  arbitrum: { id: "0xa4b1", name: "Arbitrum", symbol: "ETH", coingeckoId: "ethereum" },
-  optimism: { id: "0xa", name: "Optimism", symbol: "ETH", coingeckoId: "ethereum" },
-  avalanche: { id: "0xa86a", name: "Avalanche", symbol: "AVAX", coingeckoId: "avalanche-2" },
-  base: { id: "0x2105", name: "Base", symbol: "ETH", coingeckoId: "ethereum" },
+const CHAINS: Record<string, { id: string; name: string; symbol: string; coingeckoId: string; coingeckoPlatform: string }> = {
+  eth: { id: "0x1", name: "Ethereum", symbol: "ETH", coingeckoId: "ethereum", coingeckoPlatform: "ethereum" },
+  bsc: { id: "0x38", name: "BNB Chain", symbol: "BNB", coingeckoId: "binancecoin", coingeckoPlatform: "binance-smart-chain" },
+  polygon: { id: "0x89", name: "Polygon", symbol: "MATIC", coingeckoId: "matic-network", coingeckoPlatform: "polygon-pos" },
+  arbitrum: { id: "0xa4b1", name: "Arbitrum", symbol: "ETH", coingeckoId: "ethereum", coingeckoPlatform: "arbitrum-one" },
+  optimism: { id: "0xa", name: "Optimism", symbol: "ETH", coingeckoId: "ethereum", coingeckoPlatform: "optimistic-ethereum" },
+  avalanche: { id: "0xa86a", name: "Avalanche", symbol: "AVAX", coingeckoId: "avalanche-2", coingeckoPlatform: "avalanche" },
+  base: { id: "0x2105", name: "Base", symbol: "ETH", coingeckoId: "ethereum", coingeckoPlatform: "base" },
 };
 
 interface TokenBalance {
@@ -25,10 +25,6 @@ interface TokenBalance {
   balance: string;
   possible_spam?: boolean;
   verified_contract?: boolean;
-  usd_price?: number;
-  usd_value?: number;
-  balance_formatted?: string;
-  percentage_relative_to_total_supply?: number;
 }
 
 interface NativeBalance {
@@ -60,18 +56,37 @@ async function getNativePrice(coingeckoId: string): Promise<number> {
   }
 }
 
+async function getTokenPricesFromCoinGecko(platform: string, addresses: string[]): Promise<Record<string, number>> {
+  if (addresses.length === 0) return {};
+  try {
+    const joined = addresses.join(",");
+    const res = await fetch(
+      `${COINGECKO_API}/simple/token_price/${platform}?contract_addresses=${joined}&vs_currencies=usd`,
+      { next: { revalidate: 120 } }
+    );
+    if (!res.ok) return {};
+    const data = await res.json();
+    const result: Record<string, number> = {};
+    for (const [addr, val] of Object.entries(data)) {
+      result[addr.toLowerCase()] = (val as { usd?: number }).usd ?? 0;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 async function getWalletData(address: string, chainKey: string) {
   const chain = CHAINS[chainKey];
   const chainId = chain.id;
 
-  // Fetch token balances with prices
   const [tokenData, nativeData, nativePrice] = await Promise.allSettled([
-    moralisFetch(`/${address}/erc20?chain=${chainId}&exclude_spam=true&include_prices=true`),
+    moralisFetch(`/${address}/erc20?chain=${chainId}`),
     moralisFetch(`/${address}/balance?chain=${chainId}`),
     getNativePrice(chain.coingeckoId),
   ]);
 
-  const tokens: TokenBalance[] = tokenData.status === "fulfilled" ? (tokenData.value?.result ?? []) : [];
+  const tokens: TokenBalance[] = tokenData.status === "fulfilled" ? (tokenData.value?.result ?? tokenData.value ?? []) : [];
   const nativeBalance: NativeBalance = nativeData.status === "fulfilled" ? nativeData.value : { balance: "0" };
   const nativePriceUsd: number = nativePrice.status === "fulfilled" ? nativePrice.value : 0;
 
@@ -97,12 +112,20 @@ async function getWalletData(address: string, chainKey: string) {
     });
   }
 
+  // Filter out obvious spam (only skip if flagged as spam AND not verified)
+  const validTokens = tokens.filter(
+    (t) => !(t.possible_spam === true && t.verified_contract !== true)
+  );
+
+  // Batch fetch prices from CoinGecko
+  const contractAddresses = validTokens.map((t) => t.token_address.toLowerCase());
+  const prices = await getTokenPricesFromCoinGecko(chain.coingeckoPlatform, contractAddresses);
+
   // ERC-20 tokens
-  for (const token of tokens) {
-    if (token.possible_spam) continue;
+  for (const token of validTokens) {
     const bal = parseFloat(token.balance) / Math.pow(10, token.decimals);
-    const price = token.usd_price ?? 0;
-    const value = token.usd_value ?? bal * price;
+    const price = prices[token.token_address.toLowerCase()] ?? 0;
+    const value = bal * price;
     if (value <= 0) continue;
 
     assets.push({

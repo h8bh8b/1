@@ -14,6 +14,8 @@ interface TokenBalance {
   thumbnail?: string;
   decimals: number;
   balance: string;
+  possible_spam?: boolean;
+  verified_contract?: boolean;
 }
 
 async function moralisFetch(endpoint: string) {
@@ -154,9 +156,16 @@ async function getWalletData(address: string) {
   const cgPrices = missingAddrs.length > 0 ? await getCoinGeckoPrices(missingAddrs) : {};
 
   for (const token of tokens) {
+    // 스팸 토큰 제거
+    if (token.possible_spam === true && !token.verified_contract) continue;
+
     const addrLower = token.token_address.toLowerCase();
     const bal = parseFloat(token.balance) / Math.pow(10, token.decimals);
     const price = moralisPrices[addrLower] || cgPrices[addrLower] || 0;
+
+    // 개당 가격 $1M 초과 = 스캠 (가격 조작)
+    if (price > 1_000_000) continue;
+
     const value = bal * price;
     if (value <= 0) continue;
 

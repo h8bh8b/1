@@ -113,9 +113,7 @@ async function getWalletData(address: string, chainKey: string) {
   }
 
   // Filter out obvious spam (only skip if flagged as spam AND not verified)
-  const validTokens = tokens.filter(
-    (t) => !(t.possible_spam === true && t.verified_contract !== true)
-  );
+  const validTokens = tokens;
 
   // Batch fetch prices from CoinGecko
   const contractAddresses = validTokens.map((t) => t.token_address.toLowerCase());

@@ -415,6 +415,28 @@ async function getTokenMeta(apiKey, chain, contract) {
   return meta;
 }
 
+// ─── CoinGecko 호출 헬퍼 (rate limit 대응: 딜레이 + 재시도) ───
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+async function cgFetch(url, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    if (i > 0) await delay(2000 * i); // 재시도 시 2초, 4초 대기
+    try {
+      const res = await fetch(url);
+      if (res.status === 429) { // rate limited
+        console.warn('CoinGecko rate limited, 대기 중...');
+        await delay(5000);
+        continue;
+      }
+      if (!res.ok) continue;
+      return await res.json();
+    } catch (e) {
+      console.error('CoinGecko fetch error:', e.message);
+    }
+  }
+  return null;
+}
+
 // ─── CoinGecko 가격 (배치, 개별 캐시) ───
 async function getTokenPrices(platform, contracts) {
   if (contracts.length === 0) return {};
@@ -430,30 +452,31 @@ async function getTokenPrices(platform, contracts) {
 
   if (uncached.length === 0) return prices;
 
-  // 100개씩 배치
-  for (let i = 0; i < uncached.length; i += 100) {
-    const chunk = uncached.slice(i, i + 100);
+  // 50개씩 배치 (rate limit 방지를 위해 작게)
+  for (let i = 0; i < uncached.length; i += 50) {
+    const chunk = uncached.slice(i, i + 50);
     const addrs = chunk.join(',');
-    try {
-      const res = await fetch(
-        `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${addrs}&vs_currencies=usd`
-      );
-      const data = await res.json();
+
+    if (i > 0) await delay(1500); // 배치 간 1.5초 대기
+
+    const data = await cgFetch(
+      `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${addrs}&vs_currencies=usd`
+    );
+
+    if (data) {
       for (const [addr, pd] of Object.entries(data)) {
         const lower = addr.toLowerCase();
         const price = pd?.usd || 0;
         prices[lower] = price;
         setCache(`tp:${platform}:${lower}`, price);
       }
-      // 가격 없는 토큰도 0으로 캐시 (재호출 방지)
-      for (const addr of chunk) {
-        if (!(addr in prices)) {
-          prices[addr] = 0;
-          setCache(`tp:${platform}:${addr}`, 0);
-        }
+    }
+    // 가격 없는 토큰도 0으로 캐시 (재호출 방지)
+    for (const addr of chunk) {
+      if (!(addr in prices)) {
+        prices[addr] = 0;
+        setCache(`tp:${platform}:${addr}`, 0);
       }
-    } catch (e) {
-      console.error('CoinGecko error:', e.message);
     }
   }
 
@@ -465,16 +488,12 @@ async function getNativePrice(coingeckoId) {
   const cached = getCached(ck);
   if (cached !== null) return cached;
 
-  try {
-    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=usd`);
-    const data = await res.json();
-    const price = data[coingeckoId]?.usd || 0;
-    setCache(ck, price);
-    return price;
-  } catch (e) {
-    console.error('CoinGecko native price error:', e.message);
-    return 0;
-  }
+  const data = await cgFetch(
+    `https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=usd`
+  );
+  const price = data?.[coingeckoId]?.usd || 0;
+  setCache(ck, price);
+  return price;
 }
 
 // ─── State ───
@@ -644,7 +663,7 @@ function renderResults() {
   });
 
   let filtered = allResults;
-  if (filterView === 'qualified') filtered = filtered.filter(r => r.value >= 1000);
+  if (filterView === 'qualified') filtered = filtered.filter(r => r.value >= 1000 || r.price === 0);
   const filterChain = chainSelect.value;
   if (filterChain !== 'all') filtered = filtered.filter(r => r.chain === filterChain);
 

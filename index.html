@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wallet Asset Checker</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2a2d3a;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 { font-size: 1.8rem; margin-bottom: 8px; }
+    .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 0.9rem; }
+    .config-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .config-section h2 {
+      font-size: 1rem;
+      margin-bottom: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+    .api-key-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .api-key-row input { flex: 1; min-width: 250px; }
+    input, textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus, textarea:focus { border-color: var(--accent); }
+    textarea { width: 100%; resize: vertical; min-height: 80px; }
+    .chains-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chain-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s;
+      background: var(--bg);
+      font-size: 0.85rem;
+    }
+    .chain-chip:hover { border-color: var(--accent); }
+    .chain-chip.selected { background: var(--accent); border-color: var(--accent); color: white; }
+    .chain-chip input { display: none; }
+    .btn-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: var(--border); color: var(--text); }
+    .btn-secondary:hover { background: #3a3d4a; }
+    .status { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+    .results-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 20px 0 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .results-header h2 { font-size: 1.2rem; }
+    .summary-chips { display: flex; gap: 12px; flex-wrap: wrap; }
+    .summary-chip { padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+    .chip-green { background: rgba(34,197,94,0.15); color: var(--green); }
+    .chip-yellow { background: rgba(234,179,8,0.15); color: var(--yellow); }
+    .chip-muted { background: rgba(113,113,122,0.15); color: var(--muted); }
+    .table-wrap {
+      overflow-x: auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th {
+      text-align: left;
+      padding: 12px 16px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    th:hover { color: var(--text); }
+    td { padding: 10px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(99,102,241,0.05); }
+    .token-cell { display: flex; align-items: center; gap: 8px; }
+    .token-logo { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+    .token-logo-placeholder {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.6rem; font-weight: bold; color: var(--muted);
+    }
+    .type-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .type-native { background: rgba(234,179,8,0.15); color: var(--yellow); }
+    .type-erc20 { background: rgba(99,102,241,0.15); color: var(--accent); }
+    .addr { font-family: 'SF Mono', Monaco, monospace; font-size: 0.8rem; color: var(--muted); }
+    .value-usd { font-weight: 600; }
+    .value-unknown { color: var(--muted); font-style: italic; }
+    .value-high { color: var(--green); }
+    .contract-link {
+      color: var(--accent); text-decoration: none;
+      font-family: 'SF Mono', Monaco, monospace; font-size: 0.8rem;
+    }
+    .contract-link:hover { text-decoration: underline; }
+    .loading-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 100;
+      justify-content: center; align-items: center;
+    }
+    .loading-overlay.show { display: flex; }
+    .loading-box {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 32px 40px; text-align: center;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { color: var(--muted); font-size: 0.9rem; }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+    .empty-state p { margin-top: 8px; font-size: 0.9rem; }
+    .error-msg {
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px; padding: 12px 16px; color: var(--red);
+      margin: 16px 0; font-size: 0.9rem;
+    }
+    .filter-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .filter-row label { font-size: 0.85rem; color: var(--muted); }
+    .filter-row select {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); padding: 6px 10px;
+      font-size: 0.85rem; outline: none;
+    }
+    .cache-info { font-size: 0.75rem; color: var(--muted); margin-top: 8px; }
+    .aggregated-section { margin-top: 24px; }
+    .aggregated-section h3 { font-size: 1rem; margin-bottom: 12px; }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.3rem; }
+      td, th { padding: 8px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Wallet Asset Checker</h1>
+    <p class="subtitle">지갑 주소별 보유 자산 확인 — Native Token + ERC-20 ($1,000 이상)</p>
+
+    <div class="config-section">
+      <h2>Alchemy API Key</h2>
+      <div class="api-key-row">
+        <input type="password" id="apiKey" placeholder="Alchemy API Key 입력 (무료: alchemy.com)" />
+        <button class="btn btn-secondary" onclick="toggleApiKeyVisibility()">보기</button>
+        <a href="https://dashboard.alchemy.com/signup" target="_blank" style="color:var(--accent);font-size:0.8rem;">무료 API Key 발급</a>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <h2>지갑 주소 (한 줄에 하나씩)</h2>
+      <textarea id="addresses" placeholder="0x1234...&#10;0x5678...&#10;0xabcd..."></textarea>
+    </div>
+
+    <div class="config-section">
+      <h2>체인 선택</h2>
+      <div class="chains-grid" id="chainsGrid"></div>
+    </div>
+
+    <div class="config-section">
+      <div class="btn-row">
+        <button class="btn btn-primary" id="checkBtn" onclick="checkAssets()">자산 조회</button>
+        <button class="btn btn-secondary" onclick="clearCache()">캐시 초기화</button>
+        <span class="status" id="statusText"></span>
+      </div>
+      <div class="cache-info" id="cacheInfo"></div>
+    </div>
+
+    <div class="error-msg" id="errorMsg" style="display:none;"></div>
+
+    <div id="resultsSection" style="display:none;">
+      <div class="results-header">
+        <h2>조회 결과</h2>
+        <div class="summary-chips">
+          <span class="summary-chip chip-green" id="totalValue"></span>
+          <span class="summary-chip chip-yellow" id="totalAssets"></span>
+          <span class="summary-chip chip-muted" id="totalWallets"></span>
+        </div>
+      </div>
+
+      <div class="filter-row">
+        <label>표시:</label>
+        <select id="filterView" onchange="renderResults()">
+          <option value="qualified">$1,000 이상</option>
+          <option value="all">전체 (가격 미확인 포함)</option>
+        </select>
+        <label>체인:</label>
+        <select id="filterChain" onchange="renderResults()"></select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="sortBy('token')">토큰</th>
+              <th onclick="sortBy('type')">유형</th>
+              <th onclick="sortBy('chain')">체인</th>
+              <th onclick="sortBy('balance')">보유량</th>
+              <th onclick="sortBy('price')">가격 (USD)</th>
+              <th onclick="sortBy('value')">가치 (USD)</th>
+              <th onclick="sortBy('wallet')">지갑</th>
+              <th>컨트랙트</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="aggregated-section">
+        <h3>토큰별 합계 (전체 지갑 합산)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th onclick="sortAggBy('token')">토큰</th>
+                <th onclick="sortAggBy('chain')">체인</th>
+                <th onclick="sortAggBy('totalBalance')">총 보유량</th>
+                <th onclick="sortAggBy('price')">가격 (USD)</th>
+                <th onclick="sortAggBy('totalValue')">총 가치 (USD)</th>
+                <th onclick="sortAggBy('walletCount')">지갑 수</th>
+              </tr>
+            </thead>
+            <tbody id="aggBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="empty-state" id="emptyState">
+      <h3>지갑 주소를 입력하고 체인을 선택한 후 조회하세요</h3>
+      <p>업비트 등 거래소 지갑 주소를 입력하면 보유 자산을 확인할 수 있습니다</p>
+    </div>
+  </div>
+
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-box">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loadingText">자산 조회 중...</div>
+    </div>
+  </div>
+
+<script>
+// ═══════════════════════════════════════════
+//  모든 로직이 브라우저에서 직접 실행됩니다
+//  서버(npm) 필요 없음 — 파일 더블클릭으로 실행
+// ═══════════════════════════════════════════
+
+// ─── 체인 설정 ───
+const CHAINS = {
+  ethereum:  { name:'Ethereum',   net:'eth-mainnet',  sym:'ETH',  dec:18, cgPlat:'ethereum',             cgNative:'ethereum' },
+  polygon:   { name:'Polygon',    net:'polygon-mainnet', sym:'POL', dec:18, cgPlat:'polygon-pos',          cgNative:'matic-network' },
+  arbitrum:  { name:'Arbitrum',   net:'arb-mainnet',  sym:'ETH',  dec:18, cgPlat:'arbitrum-one',          cgNative:'ethereum' },
+  optimism:  { name:'Optimism',   net:'opt-mainnet',  sym:'ETH',  dec:18, cgPlat:'optimistic-ethereum',   cgNative:'ethereum' },
+  base:      { name:'Base',       net:'base-mainnet', sym:'ETH',  dec:18, cgPlat:'base',                  cgNative:'ethereum' },
+  bsc:       { name:'BNB Chain',  net:'bnb-mainnet',  sym:'BNB',  dec:18, cgPlat:'binance-smart-chain',   cgNative:'binancecoin' },
+  avalanche: { name:'Avalanche',  net:'avax-mainnet', sym:'AVAX', dec:18, cgPlat:'avalanche',             cgNative:'avalanche-2' },
+};
+
+const EXPLORER = {
+  Ethereum:   'https://etherscan.io',
+  Polygon:    'https://polygonscan.com',
+  Arbitrum:   'https://arbiscan.io',
+  Optimism:   'https://optimistic.etherscan.io',
+  Base:       'https://basescan.org',
+  'BNB Chain':'https://bscscan.com',
+  Avalanche:  'https://snowscan.xyz',
+};
+
+const CACHE_TTL = 10 * 60 * 1000; // 10분
+const MIN_USD = 1000;
+
+// ─── localStorage 캐시 ───
+function getCached(key) {
+  try {
+    const raw = localStorage.getItem('wac_c_' + key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (Date.now() - entry.ts > (entry.longTTL ? 86400000 : CACHE_TTL)) {
+      localStorage.removeItem('wac_c_' + key);
+      return null;
+    }
+    return entry.data;
+  } catch { return null; }
+}
+
+function setCache(key, data, longTTL = false) {
+  try {
+    localStorage.setItem('wac_c_' + key, JSON.stringify({ data, ts: Date.now(), longTTL }));
+  } catch { /* storage full — ignore */ }
+}
+
+// ─── Alchemy RPC ───
+async function alchemyRPC(apiKey, chain, method, params) {
+  const url = `https://${CHAINS[chain].net}.g.alchemy.com/v2/${apiKey}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  return res.json();
+}
+
+// ─── Native 잔액 ───
+async function getNativeBalance(apiKey, chain, address) {
+  const ck = `nb:${chain}:${address}`;
+  const cached = getCached(ck);
+  if (cached !== null) return cached;
+
+  const res = await alchemyRPC(apiKey, chain, 'eth_getBalance', [address, 'latest']);
+  if (res.error) throw new Error(res.error.message);
+  const balance = Number(BigInt(res.result)) / Math.pow(10, CHAINS[chain].dec);
+  setCache(ck, balance);
+  return balance;
+}
+
+// ─── 모든 ERC-20 잔액 ───
+async function getTokenBalances(apiKey, chain, address) {
+  const ck = `tb:${chain}:${address}`;
+  const cached = getCached(ck);
+  if (cached !== null) return cached;
+
+  const res = await alchemyRPC(apiKey, chain, 'alchemy_getTokenBalances', [address, 'erc20']);
+  if (res.error) throw new Error(res.error.message);
+
+  const balances = (res.result?.tokenBalances || [])
+    .filter(t => t.tokenBalance && t.tokenBalance !== '0x0' && t.tokenBalance !== '0x')
+    .map(t => ({
+      contract: t.contractAddress.toLowerCase(),
+      balHex: t.tokenBalance,
+    }));
+
+  setCache(ck, balances);
+  return balances;
+}
+
+// ─── 토큰 메타데이터 ───
+async function getTokenMeta(apiKey, chain, contract) {
+  const ck = `tm:${chain}:${contract}`;
+  const cached = getCached(ck);
+  if (cached !== null) return cached;
+
+  const res = await alchemyRPC(apiKey, chain, 'alchemy_getTokenMetadata', [contract]);
+  if (res.error) throw new Error(res.error.message);
+
+  const meta = {
+    name: res.result?.name || 'Unknown',
+    symbol: res.result?.symbol || '???',
+    decimals: res.result?.decimals ?? 18,
+    logo: res.result?.logo || null,
+  };
+
+  setCache(ck, meta, true); // 메타데이터는 24시간 캐시
+  return meta;
+}
+
+// ─── CoinGecko 가격 (배치, 개별 캐시) ───
+async function getTokenPrices(platform, contracts) {
+  if (contracts.length === 0) return {};
+
+  const prices = {};
+  const uncached = [];
+
+  for (const addr of contracts) {
+    const cached = getCached(`tp:${platform}:${addr}`);
+    if (cached !== null) { prices[addr] = cached; }
+    else { uncached.push(addr); }
+  }
+
+  if (uncached.length === 0) return prices;
+
+  // 100개씩 배치
+  for (let i = 0; i < uncached.length; i += 100) {
+    const chunk = uncached.slice(i, i + 100);
+    const addrs = chunk.join(',');
+    try {
+      const res = await fetch(
+        `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${addrs}&vs_currencies=usd`
+      );
+      const data = await res.json();
+      for (const [addr, pd] of Object.entries(data)) {
+        const lower = addr.toLowerCase();
+        const price = pd?.usd || 0;
+        prices[lower] = price;
+        setCache(`tp:${platform}:${lower}`, price);
+      }
+      // 가격 없는 토큰도 0으로 캐시 (재호출 방지)
+      for (const addr of chunk) {
+        if (!(addr in prices)) {
+          prices[addr] = 0;
+          setCache(`tp:${platform}:${addr}`, 0);
+        }
+      }
+    } catch (e) {
+      console.error('CoinGecko error:', e.message);
+    }
+  }
+
+  return prices;
+}
+
+async function getNativePrice(coingeckoId) {
+  const ck = `np:${coingeckoId}`;
+  const cached = getCached(ck);
+  if (cached !== null) return cached;
+
+  try {
+    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=usd`);
+    const data = await res.json();
+    const price = data[coingeckoId]?.usd || 0;
+    setCache(ck, price);
+    return price;
+  } catch (e) {
+    console.error('CoinGecko native price error:', e.message);
+    return 0;
+  }
+}
+
+// ─── State ───
+let allResults = [];
+let sortField = 'value';
+let sortDir = -1;
+let aggSortField = 'totalValue';
+let aggSortDir = -1;
+
+// ─── Init ───
+document.addEventListener('DOMContentLoaded', () => {
+  const grid = document.getElementById('chainsGrid');
+  for (const [key, cfg] of Object.entries(CHAINS)) {
+    const chip = document.createElement('label');
+    chip.className = 'chain-chip selected';
+    chip.innerHTML = `<input type="checkbox" value="${key}" checked />${cfg.name}`;
+    chip.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT') chip.classList.toggle('selected', e.target.checked);
+    });
+    grid.appendChild(chip);
+  }
+
+  const savedKey = localStorage.getItem('wac_apiKey');
+  if (savedKey) document.getElementById('apiKey').value = savedKey;
+  const savedAddrs = localStorage.getItem('wac_addresses');
+  if (savedAddrs) document.getElementById('addresses').value = savedAddrs;
+});
+
+function toggleApiKeyVisibility() {
+  const el = document.getElementById('apiKey');
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+// ─── 자산 조회 (메인 로직) ───
+async function checkAssets() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) return showError('Alchemy API Key를 입력해주세요.');
+
+  const rawAddrs = document.getElementById('addresses').value.trim();
+  if (!rawAddrs) return showError('지갑 주소를 입력해주세요.');
+
+  const addresses = rawAddrs.split('\n').map(a => a.trim()).filter(a => a.length > 0);
+  if (addresses.length === 0) return showError('유효한 지갑 주소가 없습니다.');
+
+  for (const addr of addresses) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) return showError(`잘못된 주소 형식: ${addr}`);
+  }
+
+  const chains = Array.from(document.querySelectorAll('#chainsGrid input:checked')).map(cb => cb.value);
+  if (chains.length === 0) return showError('체인을 하나 이상 선택해주세요.');
+
+  hideError();
+  localStorage.setItem('wac_apiKey', apiKey);
+  localStorage.setItem('wac_addresses', rawAddrs);
+  showLoading('자산 조회 중...');
+
+  const results = [];
+  let apiCalls = 0;
+
+  try {
+    for (const chain of chains) {
+      const cfg = CHAINS[chain];
+      updateLoading(`${cfg.name} 조회 중...`);
+
+      // 1) Native 가격 (체인당 1회, 캐시됨)
+      const nativePrice = await getNativePrice(cfg.cgNative);
+
+      // 2) 주소별 Native + 토큰 잔액
+      const allTokenAddrs = new Set();
+      const addrBalances = [];
+
+      for (const addr of addresses) {
+        const address = addr.toLowerCase();
+        try {
+          const nBal = await getNativeBalance(apiKey, chain, address);
+          const nVal = nBal * nativePrice;
+          if (nVal >= MIN_USD) {
+            results.push({
+              chain: cfg.name, wallet: address, token: cfg.sym,
+              type: 'native', balance: nBal, price: nativePrice,
+              value: nVal, contractAddress: null, logo: null,
+            });
+          }
+
+          const tokens = await getTokenBalances(apiKey, chain, address);
+          addrBalances.push({ address, tokens });
+          tokens.forEach(t => allTokenAddrs.add(t.contract));
+        } catch (e) {
+          console.error(`Error ${chain}/${addr}:`, e.message);
+        }
+      }
+
+      // 3) 토큰 가격 배치 조회 (체인당 1회)
+      const tokenAddrsArr = Array.from(allTokenAddrs);
+      const tokenPrices = await getTokenPrices(cfg.cgPlat, tokenAddrsArr);
+
+      // 4) 메타데이터 조회 + 결과 생성
+      for (const { address, tokens } of addrBalances) {
+        for (const token of tokens) {
+          const price = tokenPrices[token.contract] || 0;
+          let balRaw;
+          try { balRaw = BigInt(token.balHex); } catch { continue; }
+          if (balRaw === 0n) continue;
+
+          let meta;
+          try {
+            meta = await getTokenMeta(apiKey, chain, token.contract);
+          } catch {
+            meta = { name: 'Unknown', symbol: '???', decimals: 18, logo: null };
+          }
+
+          const balance = Number(balRaw) / Math.pow(10, meta.decimals);
+          const value = balance * price;
+
+          // $1000 이상이거나 가격 미확인(스팸 포함 전부 표시)
+          if (value >= MIN_USD || (price === 0 && balance > 0)) {
+            results.push({
+              chain: cfg.name, wallet: address,
+              token: `${meta.name} (${meta.symbol})`,
+              type: 'ERC-20', balance, price, value,
+              contractAddress: token.contract, logo: meta.logo,
+            });
+          }
+        }
+      }
+    }
+
+    // 정렬: 가치 큰 순, 가격 미확인은 맨 아래
+    results.sort((a, b) => {
+      if (a.price === 0 && b.price !== 0) return 1;
+      if (a.price !== 0 && b.price === 0) return -1;
+      return b.value - a.value;
+    });
+
+    allResults = results;
+
+    // 캐시 통계
+    let cacheCount = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      if (localStorage.key(i).startsWith('wac_c_')) cacheCount++;
+    }
+    document.getElementById('cacheInfo').textContent = `캐시: ${cacheCount}개 항목 (TTL: ${CACHE_TTL/1000}초)`;
+
+    renderResults();
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('resultsSection').style.display = 'block';
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    hideLoading();
+  }
+}
+
+// ─── 렌더링 ───
+function renderResults() {
+  const filterView = document.getElementById('filterView').value;
+  const chainSelect = document.getElementById('filterChain');
+  const currentChainFilter = chainSelect.value;
+
+  const uniqueChains = [...new Set(allResults.map(r => r.chain))];
+  chainSelect.innerHTML = '<option value="all">전체</option>';
+  uniqueChains.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    if (c === currentChainFilter) opt.selected = true;
+    chainSelect.appendChild(opt);
+  });
+
+  let filtered = allResults;
+  if (filterView === 'qualified') filtered = filtered.filter(r => r.value >= 1000);
+  const filterChain = chainSelect.value;
+  if (filterChain !== 'all') filtered = filtered.filter(r => r.chain === filterChain);
+
+  filtered.sort((a, b) => {
+    let va = a[sortField], vb = b[sortField];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return -1 * sortDir;
+    if (va > vb) return 1 * sortDir;
+    return 0;
+  });
+
+  const qualified = allResults.filter(r => r.value >= 1000);
+  const totalVal = qualified.reduce((s, r) => s + r.value, 0);
+  const wallets = new Set(allResults.map(r => r.wallet));
+
+  document.getElementById('totalValue').textContent = `총 가치: $${fmtNum(totalVal)}`;
+  document.getElementById('totalAssets').textContent = `$1K+ 자산: ${qualified.length}개`;
+  document.getElementById('totalWallets').textContent = `지갑: ${wallets.size}개`;
+
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = '';
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">조건에 맞는 자산이 없습니다</td></tr>';
+  } else {
+    filtered.forEach(r => {
+      const tr = document.createElement('tr');
+      const logo = r.logo
+        ? `<img class="token-logo" src="${r.logo}" alt="" onerror="this.style.display='none'">`
+        : `<div class="token-logo-placeholder">${(r.token||'?')[0]}</div>`;
+      const badge = r.type === 'native'
+        ? '<span class="type-badge type-native">Native</span>'
+        : '<span class="type-badge type-erc20">ERC-20</span>';
+      const valHtml = r.price === 0
+        ? '<span class="value-unknown">가격 미확인</span>'
+        : `<span class="value-usd ${r.value>=10000?'value-high':''}">\$${fmtNum(r.value)}</span>`;
+      const exp = EXPLORER[r.chain] || '';
+      const cHtml = r.contractAddress
+        ? `<a class="contract-link" href="${exp}/token/${r.contractAddress}" target="_blank">${shortAddr(r.contractAddress)}</a>`
+        : '-';
+
+      tr.innerHTML = `
+        <td><div class="token-cell">${logo} ${esc(r.token)}</div></td>
+        <td>${badge}</td>
+        <td>${esc(r.chain)}</td>
+        <td>${fmtBal(r.balance)}</td>
+        <td>${r.price ? '$'+fmtNum(r.price) : '-'}</td>
+        <td>${valHtml}</td>
+        <td><span class="addr">${shortAddr(r.wallet)}</span></td>
+        <td>${cHtml}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  renderAggregated(filtered);
+}
+
+function renderAggregated(filtered) {
+  const agg = {};
+  filtered.forEach(r => {
+    const key = r.contractAddress ? `${r.chain}:${r.contractAddress}` : `${r.chain}:native:${r.token}`;
+    if (!agg[key]) {
+      agg[key] = {
+        token:r.token, chain:r.chain, totalBalance:0, price:r.price,
+        totalValue:0, wallets:new Set(), contractAddress:r.contractAddress, logo:r.logo,
+      };
+    }
+    agg[key].totalBalance += r.balance;
+    agg[key].totalValue += r.value;
+    agg[key].wallets.add(r.wallet);
+  });
+
+  let arr = Object.values(agg).map(a => ({ ...a, walletCount: a.wallets.size }));
+  arr.sort((a, b) => {
+    let va = a[aggSortField], vb = b[aggSortField];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return -1 * aggSortDir;
+    if (va > vb) return 1 * aggSortDir;
+    return 0;
+  });
+
+  const tbody = document.getElementById('aggBody');
+  tbody.innerHTML = '';
+  if (arr.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted);">데이터 없음</td></tr>';
+    return;
+  }
+  arr.forEach(a => {
+    const tr = document.createElement('tr');
+    const logo = a.logo
+      ? `<img class="token-logo" src="${a.logo}" alt="" onerror="this.style.display='none'">`
+      : `<div class="token-logo-placeholder">${(a.token||'?')[0]}</div>`;
+    const valHtml = a.price === 0
+      ? '<span class="value-unknown">가격 미확인</span>'
+      : `<span class="value-usd ${a.totalValue>=10000?'value-high':''}">\$${fmtNum(a.totalValue)}</span>`;
+    tr.innerHTML = `
+      <td><div class="token-cell">${logo} ${esc(a.token)}</div></td>
+      <td>${esc(a.chain)}</td>
+      <td>${fmtBal(a.totalBalance)}</td>
+      <td>${a.price ? '$'+fmtNum(a.price) : '-'}</td>
+      <td>${valHtml}</td>
+      <td>${a.walletCount}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ─── 정렬 ───
+function sortBy(field) {
+  if (sortField === field) sortDir *= -1;
+  else { sortField = field; sortDir = (field==='value'||field==='balance'||field==='price') ? -1 : 1; }
+  renderResults();
+}
+function sortAggBy(field) {
+  if (aggSortField === field) aggSortDir *= -1;
+  else { aggSortField = field; aggSortDir = (field==='totalValue'||field==='totalBalance'||field==='price') ? -1 : 1; }
+  renderResults();
+}
+
+// ─── 유틸 ───
+function fmtNum(n) {
+  if (n >= 1e9) return (n/1e9).toFixed(2)+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2)+'M';
+  if (n >= 1e4) return n.toLocaleString('en-US',{maximumFractionDigits:0});
+  if (n >= 1) return n.toLocaleString('en-US',{maximumFractionDigits:2});
+  if (n >= 0.0001) return n.toFixed(4);
+  return n.toExponential(2);
+}
+function fmtBal(n) {
+  if (n >= 1e9) return (n/1e9).toFixed(4)+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(4)+'M';
+  return n.toLocaleString('en-US',{maximumFractionDigits:6});
+}
+function shortAddr(a) { return a ? a.slice(0,6)+'...'+a.slice(-4) : ''; }
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg; el.style.display = 'block';
+}
+function hideError() { document.getElementById('errorMsg').style.display = 'none'; }
+
+function showLoading(msg) {
+  document.getElementById('loadingText').textContent = msg;
+  document.getElementById('loadingOverlay').classList.add('show');
+  document.getElementById('checkBtn').disabled = true;
+}
+function updateLoading(msg) { document.getElementById('loadingText').textContent = msg; }
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+  document.getElementById('checkBtn').disabled = false;
+}
+
+function clearCache() {
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k.startsWith('wac_c_')) keys.push(k);
+  }
+  keys.forEach(k => localStorage.removeItem(k));
+  document.getElementById('statusText').textContent = `캐시 ${keys.length}개 삭제됨`;
+  setTimeout(() => { document.getElementById('statusText').textContent = ''; }, 3000);
+}
+</script>
+</body>
+</html>

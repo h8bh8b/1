@@ -2,16 +2,6 @@
 
 import { useState } from "react";
 
-const CHAINS = [
-  { key: "eth", name: "Ethereum", icon: "⟠" },
-  { key: "bsc", name: "BNB Chain", icon: "⬡" },
-  { key: "polygon", name: "Polygon", icon: "⬟" },
-  { key: "arbitrum", name: "Arbitrum", icon: "🔵" },
-  { key: "optimism", name: "Optimism", icon: "🔴" },
-  { key: "avalanche", name: "Avalanche", icon: "🔺" },
-  { key: "base", name: "Base", icon: "🔷" },
-];
-
 interface WalletBreakdown {
   address: string;
   balance: number;
@@ -23,7 +13,6 @@ interface AggregatedAsset {
   symbol: string;
   logo: string | null;
   chain: string;
-  chainKey: string;
   totalUsdValue: number;
   wallets: WalletBreakdown[];
 }
@@ -32,7 +21,6 @@ interface ApiResponse {
   assets: AggregatedAsset[];
   totalUsdValue: number;
   queriedWallets: string[];
-  queriedChains: string[];
   error?: string;
 }
 
@@ -55,7 +43,6 @@ function formatBalance(bal: number) {
 
 export default function Home() {
   const [addressInputs, setAddressInputs] = useState<string[]>([""]);
-  const [selectedChains, setSelectedChains] = useState<string[]>(CHAINS.map((c) => c.key));
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,11 +53,6 @@ export default function Home() {
     setAddressInputs((prev) => prev.filter((_, idx) => idx !== i));
   const updateAddress = (i: number, val: string) =>
     setAddressInputs((prev) => prev.map((a, idx) => (idx === i ? val : a)));
-
-  const toggleChain = (key: string) =>
-    setSelectedChains((prev) =>
-      prev.includes(key) ? prev.filter((c) => c !== key) : [...prev, key]
-    );
 
   const toggleAssetExpand = (i: number) =>
     setExpandedAssets((prev) => {
@@ -85,10 +67,6 @@ export default function Home() {
       setError("지갑 주소를 1개 이상 입력해주세요.");
       return;
     }
-    if (!selectedChains.length) {
-      setError("체인을 1개 이상 선택해주세요.");
-      return;
-    }
     setError(null);
     setResult(null);
     setExpandedAssets(new Set());
@@ -97,7 +75,7 @@ export default function Home() {
       const res = await fetch("/api/wallet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ addresses: cleaned, chains: selectedChains }),
+        body: JSON.stringify({ addresses: cleaned }),
       });
       const data: ApiResponse = await res.json();
       if (!res.ok || data.error) {
@@ -126,7 +104,7 @@ export default function Home() {
             🔍 지갑 자산 트래커
           </h1>
           <p className="text-gray-400 text-sm mt-1">
-            업비트 상장 전 지갑 입금 현황 분석 · $100 이상 보유 자산 표시
+            업비트 상장 전 지갑 입금 현황 분석 · 이더리움 체인 · $100 이상 보유 자산 표시
           </p>
         </div>
       </div>
@@ -177,42 +155,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Chain Selection */}
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-200">체인 선택</h2>
-            <div className="flex gap-3 text-xs">
-              <button
-                onClick={() => setSelectedChains(CHAINS.map((c) => c.key))}
-                className="text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                전체 선택
-              </button>
-              <button
-                onClick={() => setSelectedChains([])}
-                className="text-gray-500 hover:text-gray-400 transition-colors"
-              >
-                전체 해제
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {CHAINS.map((chain) => (
-              <button
-                key={chain.key}
-                onClick={() => toggleChain(chain.key)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
-                  selectedChains.includes(chain.key)
-                    ? "bg-blue-600 border-blue-500 text-white"
-                    : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                }`}
-              >
-                {chain.icon} {chain.name}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Search Button */}
         <button
           onClick={handleSearch}
@@ -222,19 +164,8 @@ export default function Home() {
           {loading ? (
             <span className="flex items-center justify-center gap-2">
               <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                />
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
               </svg>
               조회 중...
             </span>
@@ -313,7 +244,6 @@ export default function Home() {
                         className="px-5 py-3 grid grid-cols-12 gap-2 items-center hover:bg-gray-800/50 transition-colors cursor-pointer"
                         onClick={() => toggleAssetExpand(i)}
                       >
-                        {/* Asset Name */}
                         <div className="col-span-4 flex items-center gap-2 min-w-0">
                           {asset.logo ? (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -321,9 +251,7 @@ export default function Home() {
                               src={asset.logo}
                               alt={asset.symbol}
                               className="w-7 h-7 rounded-full shrink-0"
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = "none";
-                              }}
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                             />
                           ) : (
                             <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400 shrink-0">
@@ -336,34 +264,26 @@ export default function Home() {
                           </div>
                         </div>
 
-                        {/* Chain */}
                         <div className="col-span-2 text-right">
                           <span className="text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400">
                             {asset.chain}
                           </span>
                         </div>
 
-                        {/* Total Balance */}
                         <div className="col-span-2 text-right">
                           <p className="text-sm font-mono text-gray-200">{formatBalance(totalBalance)}</p>
                         </div>
 
-                        {/* USD Value */}
                         <div className="col-span-2 text-right">
-                          <p
-                            className={`text-sm font-semibold ${
-                              asset.totalUsdValue >= 10000
-                                ? "text-green-400"
-                                : asset.totalUsdValue >= 1000
-                                ? "text-green-500"
-                                : "text-gray-200"
-                            }`}
-                          >
+                          <p className={`text-sm font-semibold ${
+                            asset.totalUsdValue >= 10000 ? "text-green-400"
+                            : asset.totalUsdValue >= 1000 ? "text-green-500"
+                            : "text-gray-200"
+                          }`}>
                             {formatUsd(asset.totalUsdValue)}
                           </p>
                         </div>
 
-                        {/* Wallet count + expand */}
                         <div className="col-span-2 text-right">
                           <span className="text-xs text-gray-500">
                             {asset.wallets.length}개 {isExpanded ? "▲" : "▼"}
@@ -371,7 +291,6 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Expanded wallet breakdown */}
                       {isExpanded && (
                         <div className="bg-gray-950 border-t border-gray-800 px-5 py-2 space-y-1">
                           {asset.wallets.map((w, wi) => {
@@ -382,9 +301,7 @@ export default function Home() {
                               <div key={wi} className="flex items-center justify-between text-xs py-1">
                                 <span className="font-mono text-gray-400">
                                   <span className="text-gray-600 mr-1">#{walletIdx >= 0 ? walletIdx + 1 : wi + 1}</span>
-                                  {w.address.length > 20
-                                    ? `${w.address.slice(0, 10)}…${w.address.slice(-8)}`
-                                    : w.address}
+                                  {w.address.length > 20 ? `${w.address.slice(0, 10)}…${w.address.slice(-8)}` : w.address}
                                 </span>
                                 <div className="flex gap-4 text-right">
                                   <span className="text-gray-300 font-mono">{formatBalance(w.balance)}</span>
@@ -414,7 +331,7 @@ export default function Home() {
       {/* Footer */}
       <div className="border-t border-gray-800 mt-10">
         <div className="max-w-5xl mx-auto px-4 py-4 text-center text-xs text-gray-600">
-          Powered by Moralis API · 가격 데이터는 실시간이 아닐 수 있습니다 · $100 이하 자산은 표시되지 않습니다
+          Powered by Moralis API · 이더리움 체인 · $100 이하 자산은 표시되지 않습니다
         </div>
       </div>
     </div>

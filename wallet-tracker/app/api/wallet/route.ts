@@ -37,7 +37,7 @@ async function moralisFetch(endpoint: string) {
       "X-API-Key": MORALIS_API_KEY,
       "Accept": "application/json",
     },
-    next: { revalidate: 60 },
+    cache: "no-store",
   });
   if (!res.ok) throw new Error(`Moralis API error: ${res.status} ${await res.text()}`);
   return res.json();
@@ -47,7 +47,7 @@ async function getNativePrice(coingeckoId: string): Promise<number> {
   try {
     const res = await fetch(
       `${COINGECKO_API}/simple/price?ids=${coingeckoId}&vs_currencies=usd`,
-      { next: { revalidate: 120 } }
+      { cache: "no-store" }
     );
     const data = await res.json();
     return data[coingeckoId]?.usd ?? 0;
@@ -62,7 +62,7 @@ async function getTokenPricesFromCoinGecko(platform: string, addresses: string[]
     const joined = addresses.join(",");
     const res = await fetch(
       `${COINGECKO_API}/simple/token_price/${platform}?contract_addresses=${joined}&vs_currencies=usd`,
-      { next: { revalidate: 120 } }
+      { cache: "no-store" }
     );
     if (!res.ok) return {};
     const data = await res.json();
@@ -81,7 +81,7 @@ async function getWalletData(address: string, chainKey: string) {
   const chainId = chain.id;
 
   const [tokenData, nativeData, nativePrice] = await Promise.allSettled([
-    moralisFetch(`/${address}/erc20?chain=${chainId}`),
+    moralisFetch(`/${address}/erc20?chain=${chainId}&exclude_spam=false`),
     moralisFetch(`/${address}/balance?chain=${chainId}`),
     getNativePrice(chain.coingeckoId),
   ]);

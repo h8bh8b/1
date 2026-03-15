@@ -31,6 +31,22 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// KRW 환율 (USDT/KRW)
+async function getKrwRate(): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetch(`${COINGECKO_API}/simple/price?ids=tether&vs_currencies=krw`, { cache: "no-store" });
+      if (res.status === 429) { await sleep(2000 * (i + 1)); continue; }
+      if (res.ok) {
+        const data = await res.json();
+        const rate = data.tether?.krw ?? 0;
+        if (rate > 0) return rate;
+      }
+    } catch { /* fall through */ }
+  }
+  return 1400;
+}
+
 // ETH 네이티브 가격
 async function getEthPrice(): Promise<number> {
   // 1차: CoinGecko
@@ -211,14 +227,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "MORALIS_API_KEY가 설정되지 않았습니다." }, { status: 500 });
     }
 
-    const results = await Promise.allSettled(addresses.map((addr) => getWalletData(addr.trim())));
+    const [results, krwRate] = await Promise.all([
+      Promise.allSettled(addresses.map((addr) => getWalletData(addr.trim()))),
+      getKrwRate(),
+    ]);
     const allAssets: AssetItem[] = results
       .filter((r) => r.status === "fulfilled")
       .flatMap((r) => (r as PromiseFulfilledResult<AssetItem[]>).value);
 
     const aggregateMap = new Map<string, {
       name: string; symbol: string; logo: string | null;
-      chain: string; totalUsdValue: number;
+      chain: string; totalUsdValue: number; usdPrice: number;
       wallets: { address: string; balance: number; usdValue: number }[];
     }>();
 
@@ -227,7 +246,7 @@ export async function POST(req: NextRequest) {
       if (!aggregateMap.has(key)) {
         aggregateMap.set(key, {
           name: asset.name, symbol: asset.symbol, logo: asset.logo,
-          chain: asset.chain, totalUsdValue: 0, wallets: [],
+          chain: asset.chain, totalUsdValue: 0, usdPrice: asset.usdPrice, wallets: [],
         });
       }
       const entry = aggregateMap.get(key)!;
@@ -241,7 +260,7 @@ export async function POST(req: NextRequest) {
 
     const totalUsdValue = filtered.reduce((sum, a) => sum + a.totalUsdValue, 0);
 
-    return NextResponse.json({ assets: filtered, totalUsdValue, queriedWallets: addresses });
+    return NextResponse.json({ assets: filtered, totalUsdValue, queriedWallets: addresses, krwRate });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "알 수 없는 오류";
     return NextResponse.json({ error: message }, { status: 500 });

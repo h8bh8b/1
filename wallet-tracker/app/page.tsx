@@ -14,6 +14,7 @@ interface AggregatedAsset {
   logo: string | null;
   chain: string;
   totalUsdValue: number;
+  usdPrice?: number;
   wallets: WalletBreakdown[];
 }
 
@@ -21,17 +22,22 @@ interface ApiResponse {
   assets: AggregatedAsset[];
   totalUsdValue: number;
   queriedWallets: string[];
+  krwRate?: number;
   error?: string;
 }
 
 function shortenAddress(addr: string) {
-  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+  return addr.length > 14 ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : addr;
 }
 
 function formatUsd(value: number) {
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
   return `$${value.toFixed(2)}`;
+}
+
+function formatUsdFull(value: number) {
+  return `$${Math.round(value).toLocaleString()}`;
 }
 
 function formatBalance(bal: number) {
@@ -41,25 +47,25 @@ function formatBalance(bal: number) {
   return bal.toFixed(4);
 }
 
+function formatKrw(value: number) {
+  if (value >= 1_000_000_000_000) return `₩${(value / 1_000_000_000_000).toFixed(2)}조`;
+  if (value >= 100_000_000) return `₩${(value / 100_000_000).toFixed(2)}억`;
+  if (value >= 10_000) return `₩${(value / 10_000).toFixed(0)}만`;
+  return `₩${Math.round(value).toLocaleString()}`;
+}
+
 export default function Home() {
   const [addressInputs, setAddressInputs] = useState<string[]>([""]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expandedAssets, setExpandedAssets] = useState<Set<number>>(new Set());
+  const [queryTime, setQueryTime] = useState<Date | null>(null);
 
   const addAddress = () => setAddressInputs((prev) => [...prev, ""]);
   const removeAddress = (i: number) =>
     setAddressInputs((prev) => prev.filter((_, idx) => idx !== i));
   const updateAddress = (i: number, val: string) =>
     setAddressInputs((prev) => prev.map((a, idx) => (idx === i ? val : a)));
-
-  const toggleAssetExpand = (i: number) =>
-    setExpandedAssets((prev) => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
 
   const handleSearch = async () => {
     const cleaned = addressInputs.map((a) => a.trim()).filter(Boolean);
@@ -69,7 +75,6 @@ export default function Home() {
     }
     setError(null);
     setResult(null);
-    setExpandedAssets(new Set());
     setLoading(true);
     try {
       const res = await fetch("/api/wallet", {
@@ -82,6 +87,7 @@ export default function Home() {
         setError(data.error ?? "오류가 발생했습니다.");
       } else {
         setResult(data);
+        setQueryTime(new Date());
       }
     } catch {
       setError("서버와 통신 중 오류가 발생했습니다.");
@@ -89,11 +95,6 @@ export default function Home() {
       setLoading(false);
     }
   };
-
-  const totalDeposited = result?.assets.reduce(
-    (sum, a) => sum + a.wallets.reduce((s, w) => s + w.balance, 0),
-    0
-  ) ?? 0;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -184,145 +185,115 @@ export default function Home() {
         {/* Results */}
         {result && (
           <div className="space-y-4">
-            {/* Summary Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-500 mb-1">조회 지갑 수</p>
-                <p className="text-xl font-bold text-white">{result.queriedWallets.length}개</p>
-              </div>
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-500 mb-1">$100 이상 자산</p>
-                <p className="text-xl font-bold text-white">{result.assets.length}종</p>
-              </div>
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-500 mb-1">총 자산 가치</p>
-                <p className="text-xl font-bold text-green-400">{formatUsd(result.totalUsdValue)}</p>
-              </div>
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <p className="text-xs text-gray-500 mb-1">총 수량 합계</p>
-                <p className="text-xl font-bold text-blue-400">{formatBalance(totalDeposited)}</p>
-              </div>
-            </div>
-
-            {/* Wallet Labels */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="text-xs text-gray-500 mb-2">조회된 지갑 주소</p>
-              <div className="flex flex-wrap gap-2">
-                {result.queriedWallets.map((addr, i) => (
-                  <span
-                    key={i}
-                    className="bg-gray-800 text-gray-300 text-xs font-mono px-2 py-1 rounded-lg border border-gray-700"
-                    title={addr}
-                  >
-                    <span className="text-gray-500 mr-1">#{i + 1}</span>
-                    {shortenAddress(addr)}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Asset List */}
             {result.assets.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 $100 이상 보유 자산이 없습니다.
               </div>
             ) : (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-800 text-xs text-gray-500 grid grid-cols-12 gap-2">
-                  <span className="col-span-4">자산</span>
-                  <span className="col-span-2 text-right">체인</span>
-                  <span className="col-span-2 text-right">총 수량</span>
-                  <span className="col-span-2 text-right">USD 가치</span>
-                  <span className="col-span-2 text-right">지갑 수</span>
-                </div>
-                {result.assets.map((asset, i) => {
-                  const isExpanded = expandedAssets.has(i);
-                  const totalBalance = asset.wallets.reduce((s, w) => s + w.balance, 0);
-                  return (
-                    <div key={i} className="border-b border-gray-800 last:border-0">
-                      <div
-                        className="px-5 py-3 grid grid-cols-12 gap-2 items-center hover:bg-gray-800/50 transition-colors cursor-pointer"
-                        onClick={() => toggleAssetExpand(i)}
-                      >
-                        <div className="col-span-4 flex items-center gap-2 min-w-0">
-                          {asset.logo ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={asset.logo}
-                              alt={asset.symbol}
-                              className="w-7 h-7 rounded-full shrink-0"
-                              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                            />
-                          ) : (
-                            <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400 shrink-0">
-                              {asset.symbol.slice(0, 2)}
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <p className="font-semibold text-white text-sm truncate">{asset.symbol}</p>
-                            <p className="text-xs text-gray-500 truncate">{asset.name}</p>
+              result.assets.map((asset, i) => {
+                const totalBalance = asset.wallets.reduce((s, w) => s + w.balance, 0);
+                const krwRate = result.krwRate ?? 0;
+                const usdPrice = asset.usdPrice ?? 0;
+
+                return (
+                  <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                    {/* Card Header */}
+                    <div className="px-6 py-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        {asset.logo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={asset.logo}
+                            alt={asset.symbol}
+                            className="w-10 h-10 rounded-full shrink-0"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold text-gray-400 shrink-0">
+                            {asset.symbol.slice(0, 2)}
                           </div>
-                        </div>
-
-                        <div className="col-span-2 text-right">
-                          <span className="text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400">
-                            {asset.chain}
-                          </span>
-                        </div>
-
-                        <div className="col-span-2 text-right">
-                          <p className="text-sm font-mono text-gray-200">{formatBalance(totalBalance)}</p>
-                        </div>
-
-                        <div className="col-span-2 text-right">
-                          <p className={`text-sm font-semibold ${
-                            asset.totalUsdValue >= 10000 ? "text-green-400"
-                            : asset.totalUsdValue >= 1000 ? "text-green-500"
-                            : "text-gray-200"
-                          }`}>
-                            {formatUsd(asset.totalUsdValue)}
-                          </p>
-                        </div>
-
-                        <div className="col-span-2 text-right">
-                          <span className="text-xs text-gray-500">
-                            {asset.wallets.length}개 {isExpanded ? "▲" : "▼"}
-                          </span>
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xl font-bold text-white">{asset.name}</span>
+                            <span className="text-gray-400 font-medium text-sm">{asset.symbol}</span>
+                          </div>
                         </div>
                       </div>
-
-                      {isExpanded && (
-                        <div className="bg-gray-950 border-t border-gray-800 px-5 py-2 space-y-1">
-                          {asset.wallets.map((w, wi) => {
-                            const walletIdx = result.queriedWallets.findIndex(
-                              (qa) => qa.toLowerCase() === w.address.toLowerCase()
-                            );
-                            return (
-                              <div key={wi} className="flex items-center justify-between text-xs py-1">
-                                <span className="font-mono text-gray-400">
-                                  <span className="text-gray-600 mr-1">#{walletIdx >= 0 ? walletIdx + 1 : wi + 1}</span>
-                                  {w.address.length > 20 ? `${w.address.slice(0, 10)}…${w.address.slice(-8)}` : w.address}
-                                </span>
-                                <div className="flex gap-4 text-right">
-                                  <span className="text-gray-300 font-mono">{formatBalance(w.balance)}</span>
-                                  <span className="text-gray-400 w-20">{formatUsd(w.usdValue)}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                          <div className="flex justify-between pt-1 border-t border-gray-800 text-xs font-semibold">
-                            <span className="text-gray-500">합계</span>
-                            <div className="flex gap-4 text-right">
-                              <span className="text-gray-200 font-mono">{formatBalance(totalBalance)}</span>
-                              <span className="text-green-400 w-20">{formatUsd(asset.totalUsdValue)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                      <div className="flex gap-6 text-sm">
+                        <span className="text-gray-400">
+                          Price: <span className="text-yellow-400 font-semibold">{formatUsd(usdPrice)}</span>
+                        </span>
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
+
+                    {/* Table */}
+                    <div className="border-t border-gray-700">
+                      {/* Table Header */}
+                      <div className="px-6 py-2 grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider">
+                        <span className="col-span-4">WALLET</span>
+                        <span className="col-span-3 text-right">AMOUNT</span>
+                        <span className="col-span-3 text-right">USD</span>
+                        <span className="col-span-2 text-right">KRW</span>
+                      </div>
+
+                      {/* Wallet Rows */}
+                      {asset.wallets.map((w, wi) => {
+                        const walletIdx = result.queriedWallets.findIndex(
+                          (qa) => qa.toLowerCase() === w.address.toLowerCase()
+                        );
+                        const krwValue = w.usdValue * krwRate;
+                        return (
+                          <div key={wi} className="px-6 py-3 border-t border-gray-800 grid grid-cols-12 items-center hover:bg-gray-800/30 transition-colors">
+                            <div className="col-span-4 flex items-center gap-2 min-w-0">
+                              <div className="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-400 shrink-0 font-semibold">
+                                {walletIdx >= 0 ? walletIdx + 1 : wi + 1}
+                              </div>
+                              <span className="font-mono text-gray-400 text-xs truncate">
+                                {shortenAddress(w.address)}
+                              </span>
+                            </div>
+                            <span className="col-span-3 text-right text-sm font-mono text-gray-200">
+                              {formatBalance(w.balance)}
+                            </span>
+                            <span className="col-span-3 text-right text-sm text-gray-300">
+                              {formatUsdFull(w.usdValue)}
+                            </span>
+                            <span className="col-span-2 text-right text-sm text-yellow-400 font-mono">
+                              {formatKrw(krwValue)}
+                            </span>
+                          </div>
+                        );
+                      })}
+
+                      {/* Total Row */}
+                      <div className="px-6 py-3 border-t border-gray-700 grid grid-cols-12 items-center bg-gray-800/40">
+                        <span className="col-span-4 text-xs text-gray-500 font-semibold">합계</span>
+                        <span className="col-span-3 text-right text-sm font-mono text-gray-200 font-semibold">
+                          {formatBalance(totalBalance)}
+                        </span>
+                        <span className="col-span-3 text-right text-sm text-green-400 font-semibold">
+                          {formatUsd(asset.totalUsdValue)}
+                        </span>
+                        <span className="col-span-2 text-right text-sm text-yellow-400 font-semibold font-mono">
+                          {formatKrw(asset.totalUsdValue * krwRate)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card Footer */}
+                    <div className="px-6 py-2 border-t border-gray-800 flex justify-between items-center text-xs text-gray-600">
+                      <span>
+                        {queryTime?.toLocaleString("ko-KR", {
+                          year: "numeric", month: "2-digit", day: "2-digit",
+                          hour: "2-digit", minute: "2-digit", second: "2-digit",
+                        })}
+                      </span>
+                      <span>USDT/KRW ₩{Math.round(krwRate).toLocaleString()}</span>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         )}

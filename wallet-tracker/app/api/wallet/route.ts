@@ -31,19 +31,16 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// KRW 환율 (USDT/KRW)
+// KRW 환율 (업비트 USDT/KRW)
 async function getKrwRate(): Promise<number> {
-  for (let i = 0; i < 3; i++) {
-    try {
-      const res = await fetch(`${COINGECKO_API}/simple/price?ids=tether&vs_currencies=krw`, { cache: "no-store" });
-      if (res.status === 429) { await sleep(2000 * (i + 1)); continue; }
-      if (res.ok) {
-        const data = await res.json();
-        const rate = data.tether?.krw ?? 0;
-        if (rate > 0) return rate;
-      }
-    } catch { /* fall through */ }
-  }
+  try {
+    const res = await fetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT", { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      const rate = data[0]?.trade_price ?? 0;
+      if (rate > 0) return rate;
+    }
+  } catch { /* fall through */ }
   return 1400;
 }
 

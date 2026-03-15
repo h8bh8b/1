@@ -66,7 +66,7 @@ async function getWalletData(address: string, chainKey: string) {
 
   // Fetch token balances with prices
   const [tokenData, nativeData, nativePrice] = await Promise.allSettled([
-    moralisFetch(`/${address}/erc20?chain=${chainId}&exclude_spam=true`),
+    moralisFetch(`/${address}/erc20?chain=${chainId}&exclude_spam=true&include_prices=true`),
     moralisFetch(`/${address}/balance?chain=${chainId}`),
     getNativePrice(chain.coingeckoId),
   ]);

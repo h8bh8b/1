@@ -105,7 +105,7 @@ export default function Home() {
             🔍 지갑 자산 트래커
           </h1>
           <p className="text-gray-400 text-sm mt-1">
-            업비트 상장 전 지갑 입금 현황 분석 · 이더리움 체인 · $100 이상 보유 자산 표시
+            업비트 상장 전 지갑 입금 현황 분석 · 이더리움 / 솔라나 체인 · $100 이상 보유 자산 표시
           </p>
         </div>
       </div>
@@ -128,7 +128,7 @@ export default function Home() {
                 </span>
                 <input
                   type="text"
-                  placeholder="0x... 또는 지갑 주소 입력"
+                  placeholder="0x... (이더리움) 또는 솔라나 주소 입력"
                   value={addr}
                   onChange={(e) => updateAddress(i, e.target.value)}
                   onKeyDown={(e) =>
@@ -217,6 +217,9 @@ export default function Home() {
                           <div className="flex items-center gap-2">
                             <span className="text-xl font-bold text-white">{asset.name}</span>
                             <span className="text-gray-400 font-medium text-sm">{asset.symbol}</span>
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${asset.chain === "Solana" ? "bg-purple-900 text-purple-300" : "bg-blue-900 text-blue-300"}`}>
+                              {asset.chain === "Solana" ? "SOL" : "ETH"}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -302,7 +305,7 @@ export default function Home() {
       {/* Footer */}
       <div className="border-t border-gray-800 mt-10">
         <div className="max-w-5xl mx-auto px-4 py-4 text-center text-xs text-gray-600">
-          Powered by Moralis API · 이더리움 체인 · $100 이하 자산은 표시되지 않습니다
+          Powered by Moralis API · 이더리움 / 솔라나 체인 · $100 이하 자산은 표시되지 않습니다
         </div>
       </div>
     </div>

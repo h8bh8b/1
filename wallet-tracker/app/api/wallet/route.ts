@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 const MORALIS_API_KEY = process.env.MORALIS_API_KEY || "";
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
 const MORALIS_API = "https://deep-index.moralis.io/api/v2.2";
+const SOLANA_GATEWAY = "https://solana-gateway.moralis.io/api/v0";
+const SOLANA_NETWORK = "mainnet";
 
 const ETH_CHAIN_ID = "0x1";
 
@@ -18,12 +20,36 @@ interface TokenBalance {
   verified_contract?: boolean;
 }
 
+interface SolanaToken {
+  mint: string;
+  name?: string;
+  symbol?: string;
+  logo?: string;
+  thumbnail?: string;
+  decimals?: string;
+  amount?: string;
+  amountRaw?: string;
+}
+
+function isSolanaAddress(address: string): boolean {
+  return !address.startsWith("0x") && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+}
+
 async function moralisFetch(endpoint: string) {
   const res = await fetch(`${MORALIS_API}${endpoint}`, {
     headers: { "X-API-Key": MORALIS_API_KEY, "Accept": "application/json" },
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Moralis API error: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function solanaFetch(endpoint: string) {
+  const res = await fetch(`${SOLANA_GATEWAY}${endpoint}`, {
+    headers: { "X-API-Key": MORALIS_API_KEY, "Accept": "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Solana API error: ${res.status} ${await res.text()}`);
   return res.json();
 }
 
@@ -65,6 +91,22 @@ async function getEthPrice(): Promise<number> {
   } catch { return 0; }
 }
 
+// SOL 네이티브 가격
+async function getSolPrice(): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetch(`${COINGECKO_API}/simple/price?ids=solana&vs_currencies=usd`, { cache: "no-store" });
+      if (res.status === 429) { await sleep(2000 * (i + 1)); continue; }
+      if (res.ok) {
+        const data = await res.json();
+        const price = data.solana?.usd ?? 0;
+        if (price > 0) return price;
+      }
+    } catch { /* fall through */ }
+  }
+  return 0;
+}
+
 // Moralis 배치 가격 API (최대 25개씩)
 async function getMoralisBatchPrices(addresses: string[]): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
@@ -99,7 +141,7 @@ async function getMoralisBatchPrices(addresses: string[]): Promise<Record<string
 }
 
 // CoinGecko 토큰 가격 (50개씩, 재시도)
-async function getCoinGeckoPrices(addresses: string[]): Promise<Record<string, number>> {
+async function getCoinGeckoPrices(addresses: string[], platform = "ethereum"): Promise<Record<string, number>> {
   if (addresses.length === 0) return {};
   const result: Record<string, number> = {};
   const CHUNK = 50;
@@ -108,7 +150,7 @@ async function getCoinGeckoPrices(addresses: string[]): Promise<Record<string, n
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res = await fetch(
-          `${COINGECKO_API}/simple/token_price/ethereum?contract_addresses=${chunk.join(",")}&vs_currencies=usd`,
+          `${COINGECKO_API}/simple/token_price/${platform}?contract_addresses=${chunk.join(",")}&vs_currencies=usd`,
           { cache: "no-store" }
         );
         if (res.status === 429) { await sleep(2000 * (attempt + 1)); continue; }
@@ -124,7 +166,7 @@ async function getCoinGeckoPrices(addresses: string[]): Promise<Record<string, n
   return result;
 }
 
-async function getWalletData(address: string) {
+async function getWalletData(address: string): Promise<AssetItem[]> {
   const [tokenData, nativeData, ethPrice] = await Promise.allSettled([
     moralisFetch(`/${address}/erc20?chain=${ETH_CHAIN_ID}&exclude_spam=false`),
     moralisFetch(`/${address}/balance?chain=${ETH_CHAIN_ID}`),
@@ -199,6 +241,72 @@ async function getWalletData(address: string) {
   return assets;
 }
 
+async function getSolanaWalletData(address: string): Promise<AssetItem[]> {
+  const [portfolioResult, solPriceResult] = await Promise.allSettled([
+    solanaFetch(`/account/${SOLANA_NETWORK}/${address}/portfolio`),
+    getSolPrice(),
+  ]);
+
+  if (portfolioResult.status === "rejected") return [];
+
+  const portfolio = portfolioResult.value;
+  const solPrice = solPriceResult.status === "fulfilled" ? solPriceResult.value : 0;
+  const assets: AssetItem[] = [];
+
+  // 네이티브 SOL
+  const lamports = parseFloat(portfolio.nativeBalance?.lamports ?? "0");
+  const solAmount = lamports / 1e9;
+  const solUsdValue = solAmount * solPrice;
+
+  if (solUsdValue > 0) {
+    assets.push({
+      type: "native",
+      address: "native",
+      name: "Solana",
+      symbol: "SOL",
+      logo: null,
+      balance: solAmount,
+      usdPrice: solPrice,
+      usdValue: solUsdValue,
+      chain: "Solana",
+      wallet: address,
+    });
+  }
+
+  // SPL 토큰
+  const tokens: SolanaToken[] = portfolio.tokens ?? [];
+  if (tokens.length === 0) return assets;
+
+  const mints = tokens.map((t) => t.mint);
+  const cgPrices = await getCoinGeckoPrices(mints, "solana");
+
+  for (const token of tokens) {
+    const decimals = parseInt(token.decimals ?? "0");
+    const bal = token.amount ? parseFloat(token.amount) : parseFloat(token.amountRaw ?? "0") / Math.pow(10, decimals);
+    const mintLower = token.mint.toLowerCase();
+    const price = cgPrices[mintLower] ?? 0;
+
+    if (price > 1_000_000) continue;
+    const value = bal * price;
+    if (value <= 0) continue;
+
+    assets.push({
+      type: "erc20",
+      address: token.mint,
+      name: token.name ?? token.symbol ?? "Unknown",
+      symbol: token.symbol ?? "???",
+      logo: token.logo ?? token.thumbnail ?? null,
+      balance: bal,
+      usdPrice: price,
+      usdValue: value,
+      chain: "Solana",
+      wallet: address,
+    });
+  }
+
+  return assets;
+}
+
 export interface AssetItem {
   type: "native" | "erc20";
   address: string;
@@ -224,13 +332,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "MORALIS_API_KEY가 설정되지 않았습니다." }, { status: 500 });
     }
 
-    const [results, krwRate] = await Promise.all([
-      Promise.allSettled(addresses.map((addr) => getWalletData(addr.trim()))),
+    const evmAddresses = addresses.filter((a) => !isSolanaAddress(a.trim()));
+    const solAddresses = addresses.filter((a) => isSolanaAddress(a.trim()));
+
+    const [evmResults, solResults, krwRate] = await Promise.all([
+      Promise.allSettled(evmAddresses.map((addr) => getWalletData(addr.trim()))),
+      Promise.allSettled(solAddresses.map((addr) => getSolanaWalletData(addr.trim()))),
       getKrwRate(),
     ]);
-    const allAssets: AssetItem[] = results
-      .filter((r) => r.status === "fulfilled")
-      .flatMap((r) => (r as PromiseFulfilledResult<AssetItem[]>).value);
+
+    const allAssets: AssetItem[] = [
+      ...evmResults.filter((r) => r.status === "fulfilled").flatMap((r) => (r as PromiseFulfilledResult<AssetItem[]>).value),
+      ...solResults.filter((r) => r.status === "fulfilled").flatMap((r) => (r as PromiseFulfilledResult<AssetItem[]>).value),
+    ];
 
     const aggregateMap = new Map<string, {
       name: string; symbol: string; logo: string | null;
@@ -239,7 +353,7 @@ export async function POST(req: NextRequest) {
     }>();
 
     for (const asset of allAssets) {
-      const key = `${asset.symbol}__eth__${asset.address}`;
+      const key = `${asset.chain}__${asset.symbol}__${asset.address}`;
       if (!aggregateMap.has(key)) {
         aggregateMap.set(key, {
           name: asset.name, symbol: asset.symbol, logo: asset.logo,

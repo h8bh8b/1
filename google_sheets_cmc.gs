@@ -10,8 +10,9 @@
  *   5. 완료 시 트리거 자동 삭제
  *
  * 시트 구조:
- *   [Rankings] 시트: Date, Rank, Symbol, Name, MarketCap, FDV, Price,
+ *   [Rankings] 시트: Date, Rank, Project, Symbol, MarketCap, FDV, Price,
  *                    Volume24h, CirculatingSupply, TotalSupply, MaxSupply,
+ *                    NumMarketPairs,
  *                    Volume24h, CirculatingSupply, TotalSupply, MaxSupply
  *   [Progress] 시트: 마지막 수집 날짜 기록 (자동 이어하기용)
  *   [Summary]  시트: 수집 완료 후 자동 생성 - 프로젝트별 등장 횟수 통계
@@ -49,8 +50,8 @@ function startCollection() {
   var rankSheet = getOrCreateSheet(ss, CONFIG.RANKINGS_SHEET);
   rankSheet.clear();
   rankSheet.appendRow([
-    'Date', 'Rank', 'Symbol', 'Name', 'MarketCap', 'FDV', 'Price',
-    'Volume24h', 'CirculatingSupply', 'TotalSupply', 'MaxSupply'
+    'Date', 'Rank', 'Project', 'Symbol', 'MarketCap', 'FDV', 'Price',
+    'Volume24h', 'CirculatingSupply', 'TotalSupply', 'MaxSupply', 'NumMarketPairs'
   ]);
   rankSheet.getRange('1:1').setFontWeight('bold');
   rankSheet.setFrozenRows(1);
@@ -112,8 +113,8 @@ function resumeCollection() {
         var d = data[j];
         batchRows.push([
           dateStr,
-          d.rank, d.symbol, d.name, d.marketCap, d.fdv, d.price,
-          d.volume24h, d.circulatingSupply, d.totalSupply, d.maxSupply
+          d.rank, d.name, d.symbol, d.marketCap, d.fdv, d.price,
+          d.volume24h, d.circulatingSupply, d.totalSupply, d.maxSupply, d.numMarketPairs
         ]);
       }
       fetchedCount++;
@@ -128,7 +129,7 @@ function resumeCollection() {
     if (batchRows.length >= 50 * CONFIG.TOP_N || i === dates.length - 1) {
       if (batchRows.length > 0) {
         var lastRow = rankSheet.getLastRow();
-        rankSheet.getRange(lastRow + 1, 1, batchRows.length, 11).setValues(batchRows);
+        rankSheet.getRange(lastRow + 1, 1, batchRows.length, 12).setValues(batchRows);
         batchRows = [];
       }
     }
@@ -139,7 +140,7 @@ function resumeCollection() {
   // 남은 행 쓰기
   if (batchRows.length > 0) {
     var lastRow = rankSheet.getLastRow();
-    rankSheet.getRange(lastRow + 1, 1, batchRows.length, 11).setValues(batchRows);
+    rankSheet.getRange(lastRow + 1, 1, batchRows.length, 12).setValues(batchRows);
   }
 
   // 완료 여부 확인
@@ -195,7 +196,8 @@ function fetchTopN(dateStr) {
             volume24h:         q.volume24h || 0,
             circulatingSupply: item.circulatingSupply || 0,
             totalSupply:       item.totalSupply || 0,
-            maxSupply:         item.maxSupply || ''
+            maxSupply:         item.maxSupply || '',
+            numMarketPairs:    item.numMarketPairs || 0
           });
         }
         return result;
@@ -229,8 +231,8 @@ function generateSummary() {
 
   for (var i = 1; i < data.length; i++) {
     var date   = data[i][0];
-    var symbol = data[i][2];
-    var name   = data[i][3];
+    var name   = data[i][2];
+    var symbol = data[i][3];
 
     if (!symbol) continue;
     allDates[date] = true;

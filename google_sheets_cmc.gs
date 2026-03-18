@@ -1,6 +1,6 @@
 /**
  * CoinMarketCap Top 20 Daily Rankings → Google Sheets
- * 기간: 2024/01/01 ~ 2026/03/18 (약 808일)
+ * 기간: 2013/04/28 ~ 2026/03/18 (약 4,708일)
  *
  * 사용법:
  *   1. Google Sheets → 확장 프로그램 → Apps Script
@@ -12,8 +12,7 @@
  * 시트 구조:
  *   [Rankings] 시트: Date, Rank, Project, Symbol, MarketCap, FDV, Price,
  *                    Volume24h, CirculatingSupply, TotalSupply, MaxSupply,
- *                    NumMarketPairs,
- *                    Volume24h, CirculatingSupply, TotalSupply, MaxSupply
+ *                    NumMarketPairs
  *   [Progress] 시트: 마지막 수집 날짜 기록 (자동 이어하기용)
  *   [Summary]  시트: 수집 완료 후 자동 생성 - 프로젝트별 등장 횟수 통계
  */
@@ -65,7 +64,7 @@ function startCollection() {
   SpreadsheetApp.getUi().alert(
     '수집을 시작합니다.\n' +
     '기간: ' + CONFIG.START_DATE + ' ~ ' + CONFIG.END_DATE + '\n' +
-    '약 808일 분량이므로 여러 차례 자동 실행됩니다.\n' +
+    '약 4,708일 분량이므로 여러 차례 자동 실행됩니다.\n' +
     'Progress 시트에서 진행 상황을 확인하세요.'
   );
 

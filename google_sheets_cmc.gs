@@ -12,7 +12,7 @@
  * 시트 구조:
  *   [Rankings] 시트: Date, Rank, Symbol, Name, MarketCap, FDV, Price,
  *                    Volume24h, CirculatingSupply, TotalSupply, MaxSupply,
- *                    NumMarketPairs
+ *                    Volume24h, CirculatingSupply, TotalSupply, MaxSupply
  *   [Progress] 시트: 마지막 수집 날짜 기록 (자동 이어하기용)
  *   [Summary]  시트: 수집 완료 후 자동 생성 - 프로젝트별 등장 횟수 통계
  */
@@ -50,8 +50,7 @@ function startCollection() {
   rankSheet.clear();
   rankSheet.appendRow([
     'Date', 'Rank', 'Symbol', 'Name', 'MarketCap', 'FDV', 'Price',
-    'Volume24h', 'CirculatingSupply', 'TotalSupply', 'MaxSupply',
-    'NumMarketPairs'
+    'Volume24h', 'CirculatingSupply', 'TotalSupply', 'MaxSupply'
   ]);
   rankSheet.getRange('1:1').setFontWeight('bold');
   rankSheet.setFrozenRows(1);
@@ -114,8 +113,7 @@ function resumeCollection() {
         batchRows.push([
           dateStr,
           d.rank, d.symbol, d.name, d.marketCap, d.fdv, d.price,
-          d.volume24h, d.circulatingSupply, d.totalSupply, d.maxSupply,
-          d.numMarketPairs
+          d.volume24h, d.circulatingSupply, d.totalSupply, d.maxSupply
         ]);
       }
       fetchedCount++;
@@ -130,7 +128,7 @@ function resumeCollection() {
     if (batchRows.length >= 50 * CONFIG.TOP_N || i === dates.length - 1) {
       if (batchRows.length > 0) {
         var lastRow = rankSheet.getLastRow();
-        rankSheet.getRange(lastRow + 1, 1, batchRows.length, 12).setValues(batchRows);
+        rankSheet.getRange(lastRow + 1, 1, batchRows.length, 11).setValues(batchRows);
         batchRows = [];
       }
     }
@@ -141,7 +139,7 @@ function resumeCollection() {
   // 남은 행 쓰기
   if (batchRows.length > 0) {
     var lastRow = rankSheet.getLastRow();
-    rankSheet.getRange(lastRow + 1, 1, batchRows.length, 12).setValues(batchRows);
+    rankSheet.getRange(lastRow + 1, 1, batchRows.length, 11).setValues(batchRows);
   }
 
   // 완료 여부 확인
@@ -197,8 +195,7 @@ function fetchTopN(dateStr) {
             volume24h:         q.volume24h || 0,
             circulatingSupply: item.circulatingSupply || 0,
             totalSupply:       item.totalSupply || 0,
-            maxSupply:         item.maxSupply || '',
-            numMarketPairs:    item.numMarketPairs || 0
+            maxSupply:         item.maxSupply || ''
           });
         }
         return result;

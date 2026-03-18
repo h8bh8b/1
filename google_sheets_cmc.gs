@@ -20,7 +20,7 @@
 
 // ── 설정 ──────────────────────────────────────────────────────────────────────
 var CONFIG = {
-  START_DATE: '2024-01-01',
+  START_DATE: '2013-04-28',
   END_DATE:   '2026-03-18',
   TOP_N:      20,
   API_URL:    'https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listings/historical',

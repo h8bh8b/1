@@ -182,6 +182,21 @@ def create_animation(data: pd.DataFrame, output_file: Path, fps: int, dpi: int, 
         plt.close(fig)
 
 
+def generate_video_from_csv(
+    input_path: Path,
+    output_path: Path,
+    fps: int = 1,
+    dpi: int = 160,
+    top_n: int = 20,
+) -> Path:
+    if output_path.suffix.lower() != ".mp4":
+        output_path = output_path.with_suffix(".mp4")
+
+    data = load_and_prepare(input_path, top_n=top_n)
+    create_animation(data, output_path, fps=fps, dpi=dpi, top_n=top_n)
+    return output_path
+
+
 def main() -> None:
     args = parse_args()
 
@@ -197,15 +212,19 @@ def main() -> None:
 
     input_path = Path(args.input)
     output_path = Path(args.output)
-    if output_path.suffix.lower() != ".mp4":
-        output_path = output_path.with_suffix(".mp4")
 
     if not input_path.exists():
         raise FileNotFoundError(f"입력 파일을 찾을 수 없습니다: {input_path}")
 
-    data = load_and_prepare(input_path, top_n=args.top_n)
-    create_animation(data, output_path, fps=args.fps, dpi=args.dpi, top_n=args.top_n)
+    output_path = generate_video_from_csv(
+        input_path=input_path,
+        output_path=output_path,
+        fps=args.fps,
+        dpi=args.dpi,
+        top_n=args.top_n,
+    )
 
+    data = load_and_prepare(input_path, top_n=args.top_n)
     years = sorted(data["Year"].unique())
     print(f"완료: {len(years)}개 연도 프레임 생성 ({years[0]}~{years[-1]})")
     print(f"출력 파일: {output_path}")

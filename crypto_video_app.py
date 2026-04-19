@@ -56,7 +56,9 @@ if uploaded_file is not None:
             st.error(
                 "영상 생성에 실패했습니다.\n"
                 f"오류: {e}\n\n"
-                "필수 패키지 확인: pip install pandas matplotlib streamlit\n"
+                "필수 패키지 확인:\n"
+                "- Windows: py -m pip install pandas matplotlib streamlit\n"
+                "- Mac/Linux: python3 -m pip install pandas matplotlib streamlit\n"
                 "또는 ffmpeg 설치 상태를 확인해 주세요."
             )
 else:

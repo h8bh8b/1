@@ -30,11 +30,27 @@ sudo apt-get update && sudo apt-get install -y ffmpeg
 ## 2) 웹 화면 실행
 
 ### Windows
+먼저 `crypto_video_app.py` 파일이 있는 폴더로 이동해야 합니다.
+```bash
+cd /d C:\경로\프로젝트폴더
+dir
+```
+`dir` 결과에 `crypto_video_app.py`가 보여야 합니다.
+
+그 다음 실행:
 ```bash
 py -m streamlit run crypto_video_app.py
 ```
 
 ### Mac / Linux
+먼저 파일이 있는 폴더로 이동:
+```bash
+cd /프로젝트/폴더/경로
+ls
+```
+`ls` 결과에 `crypto_video_app.py`가 보여야 합니다.
+
+그 다음 실행:
 ```bash
 python3 -m streamlit run crypto_video_app.py
 ```
@@ -60,3 +76,16 @@ py -m pip install pandas matplotlib streamlit
 python -m pip install pandas matplotlib streamlit
 python -m streamlit run crypto_video_app.py
 ```
+
+### `Invalid value: File does not exist: crypto_video_app.py` 오류
+- 현재 폴더에 파일이 없다는 뜻입니다.
+- 아래 순서로 확인:
+```bash
+cd /d C:\경로\프로젝트폴더
+dir
+```
+- `crypto_video_app.py`가 보이면 다시 실행:
+```bash
+py -m streamlit run crypto_video_app.py
+```
+- 파일이 안 보이면, 프로젝트 파일(`crypto_video_app.py`, `create_crypto_top20_video.py`)을 같은 폴더에 먼저 저장해야 합니다.

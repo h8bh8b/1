@@ -145,10 +145,13 @@ function fetchBatch_(addresses) {
     r2Meta.push({ addrIdx, type: "pool" });
     r2Reqs.push(buildReq_("/v1/market/token_kline", { chain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }));
     r2Meta.push({ addrIdx, type: "kline" });
+    r2Reqs.push(buildReq_("/v1/market/token_top_holders", { chain, address: normAddr, tag: "fresh_wallet", limit: 100 }));
+    r2Meta.push({ addrIdx, type: "fresh" });
   });
 
-  const poolObjs  = new Array(addresses.length).fill(null);
-  const vol24hArr = new Array(addresses.length).fill(null);
+  const poolObjs   = new Array(addresses.length).fill(null);
+  const vol24hArr  = new Array(addresses.length).fill(null);
+  const freshPctArr = new Array(addresses.length).fill(null);
 
   if (r2Reqs.length) {
     UrlFetchApp.fetchAll(r2Reqs).forEach((res, i) => {
@@ -180,6 +183,25 @@ function fetchBatch_(addresses) {
         } else {
           Logger.log("kline 응답 구조 미확인: " + JSON.stringify(json).substring(0, 300));
         }
+
+      } else if (type === "fresh") {
+        // top_holders?tag=fresh_wallet → holders[].amount_percentage 합산
+        const d = json.data ?? json;
+        let holders = null;
+        if (Array.isArray(d))               holders = d;
+        else if (Array.isArray(d?.list))    holders = d.list;
+        else if (Array.isArray(d?.holders)) holders = d.holders;
+
+        if (holders) {
+          const sumPct = holders.reduce((s, h) => {
+            const p = parseFloat(h.amount_percentage ?? h.percentage ?? h.amount_rate ?? 0);
+            return s + (isNaN(p) ? 0 : p);
+          }, 0);
+          // amount_percentage가 0~1 소수 vs 0~100 % 구분
+          freshPctArr[addrIdx] = sumPct > 1 ? sumPct : sumPct * 100;
+        } else {
+          Logger.log("fresh holders 응답 구조 미확인: " + JSON.stringify(json).substring(0, 300));
+        }
       }
     });
   }
@@ -189,7 +211,7 @@ function fetchBatch_(addresses) {
     if (!addr || !infoObjs[addrIdx]) return null;
     return {
       chain: winningChains[addrIdx],
-      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx])
+      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx], freshPctArr[addrIdx])
     };
   });
 }
@@ -208,25 +230,39 @@ function querySingle_(address) {
   }
   if (!infoObj) return null;
 
-  // Round 2: pool_info + kline 동시 요청
+  // Round 2: pool_info + kline + fresh holders 동시 요청
   const now24hAgo = Math.floor(Date.now() / 1000) - 86400;
   const nowTs     = Math.floor(Date.now() / 1000);
   const r2Resps = UrlFetchApp.fetchAll([
     buildReq_("/v1/token/pool_info", { chain: winChain, address: normAddr }),
-    buildReq_("/v1/market/token_kline", { chain: winChain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 })
+    buildReq_("/v1/market/token_kline", { chain: winChain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }),
+    buildReq_("/v1/market/token_top_holders", { chain: winChain, address: normAddr, tag: "fresh_wallet", limit: 100 })
   ]);
 
   const poolObj = parseRes_(r2Resps[0]);
+
   let vol24h = null;
   try {
     const kj = JSON.parse(r2Resps[1].getContentText());
-    const candles = kj.data || kj;
+    const d  = kj.data ?? kj;
+    let candles = Array.isArray(d) ? d : (d?.list || d?.candles || d?.kline || d?.klines);
     if (Array.isArray(candles) && candles.length) {
-      vol24h = candles.reduce((s, c) => s + (parseFloat(c.volume) || 0), 0);
+      vol24h = candles.reduce((s, c) => s + (parseFloat(c.volume ?? c.vol ?? 0) || 0), 0);
     }
   } catch(e) {}
 
-  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h) };
+  let freshPct = null;
+  try {
+    const fj = JSON.parse(r2Resps[2].getContentText());
+    const d  = fj.data ?? fj;
+    let holders = Array.isArray(d) ? d : (d?.list || d?.holders);
+    if (Array.isArray(holders)) {
+      const sum = holders.reduce((s, h) => s + (parseFloat(h.amount_percentage ?? h.percentage ?? 0) || 0), 0);
+      freshPct = sum > 1 ? sum : sum * 100;
+    }
+  } catch(e) {}
+
+  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h, freshPct) };
 }
 
 // ─── 공통: 요청 객체 생성 ────────────────────────────────────────────────
@@ -272,7 +308,7 @@ function normalizeAddress_(address) {
 }
 
 // ─── 응답 데이터 조합 ────────────────────────────────────────────────────
-function buildData_(info, pool, vol24hKline) {
+function buildData_(info, pool, vol24hKline, freshPct) {
   const price   = parseNum_(info?.price?.price ?? info?.price);
   const csupply = parseNum_(info?.circulating_supply);
   const tsupply = parseNum_(info?.total_supply);
@@ -292,24 +328,26 @@ function buildData_(info, pool, vol24hKline) {
   const holders   = parseNum_(info?.holder_count ?? info?.holders);
   const liquidity = parseNum_(info?.liquidity ?? poolItem?.liquidity);
 
-  // 신규 홀딩 %: fresh_wallet_rate (공식 필드)
-  let newHolding = null;
-  for (const v of [info?.fresh_wallet_rate, poolItem?.fresh_wallet_rate,
-                   info?.new_holder_ratio,  info?.new_holder_6h_ratio,
-                   info?.new_holder_1h_ratio]) {
-    if (v != null && !isNaN(parseFloat(v))) {
-      const n = parseFloat(v);
-      newHolding = n > 1 ? n : n * 100;
-      break;
+  // 신규 홀딩 %: top_holders 합산값 우선
+  let newHolding = freshPct;
+  if (newHolding == null) {
+    for (const v of [info?.fresh_wallet_rate, poolItem?.fresh_wallet_rate,
+                     info?.new_holder_ratio,  info?.new_holder_6h_ratio,
+                     info?.new_holder_1h_ratio]) {
+      if (v != null && !isNaN(parseFloat(v))) {
+        const n = parseFloat(v);
+        newHolding = n > 1 ? n : n * 100;
+        break;
+      }
     }
   }
-  if (newHolding === null && info?.new_holder_count && info?.holder_count) {
-    newHolding = (info.new_holder_count / info.holder_count) * 100;
-  }
 
+  // Token Age: pool 정보의 풀 생성 시각도 후보에 포함
   const ts = parseNum_(
-    info?.open_timestamp      ?? info?.creation_timestamp ?? info?.created_timestamp ??
-    poolItem?.open_timestamp  ?? poolItem?.creation_timestamp
+    info?.open_timestamp           ?? info?.creation_timestamp     ?? info?.created_timestamp ??
+    info?.create_timestamp         ?? info?.launch_timestamp       ?? info?.pool_creation_timestamp ??
+    poolItem?.open_timestamp       ?? poolItem?.creation_timestamp ?? poolItem?.pool_creation_timestamp ??
+    poolItem?.create_timestamp     ?? poolItem?.created_timestamp  ?? poolItem?.created_at
   );
 
   return {

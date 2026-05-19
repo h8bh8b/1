@@ -70,7 +70,6 @@ function setupHeaders() {
   const r = sheet.getRange(1, 1, 1, h.length);
   r.setValues([h]).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e0e0e0");
   sheet.setFrozenRows(1);
-  [360,150,90,120,120,130,80,120,110,100,70,160].forEach((w,i)=>sheet.setColumnWidth(i+1,w));
   SpreadsheetApp.getUi().alert("헤더 설정 완료!");
 }
 

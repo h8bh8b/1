@@ -189,9 +189,10 @@ function buildData_(info, pool) {
   const holders   = parseNum_(info?.holder_count ?? info?.holders);
   const liquidity = parseNum_(info?.liquidity ?? pool?.liquidity);
 
-  // 신규 홀딩 %
+  // 신규 홀딩 % — fresh_wallet_rate: 신규(fresh) 지갑이 보유한 비율 (0~1 소수)
   let newHolding = null;
   const nhFields = [
+    info?.fresh_wallet_rate, pool?.fresh_wallet_rate,
     info?.new_holder_ratio, info?.new_holder_6h_ratio,
     info?.new_holder_1h_ratio, info?.smart_buy_ratio_24h
   ];

@@ -163,10 +163,22 @@ function fetchBatch_(addresses) {
         if (obj && typeof obj === "object") poolObjs[addrIdx] = obj;
 
       } else if (type === "kline") {
-        // kline: { data: [ { time, open, high, low, close, volume }, ... ] }
-        const candles = json.data || json;
-        if (Array.isArray(candles) && candles.length) {
-          vol24hArr[addrIdx] = candles.reduce((sum, c) => sum + (parseFloat(c.volume) || 0), 0);
+        // kline 응답 구조 후보: data[] / data.list[] / data.candles[] / data.kline[]
+        const d = json.data ?? json;
+        let candles = null;
+        if (Array.isArray(d))                  candles = d;
+        else if (Array.isArray(d?.list))       candles = d.list;
+        else if (Array.isArray(d?.candles))    candles = d.candles;
+        else if (Array.isArray(d?.kline))      candles = d.kline;
+        else if (Array.isArray(d?.klines))     candles = d.klines;
+
+        if (candles && candles.length) {
+          vol24hArr[addrIdx] = candles.reduce((sum, c) => {
+            const v = parseFloat(c.volume ?? c.vol ?? c.volume_usd ?? 0);
+            return sum + (isNaN(v) ? 0 : v);
+          }, 0);
+        } else {
+          Logger.log("kline 응답 구조 미확인: " + JSON.stringify(json).substring(0, 300));
         }
       }
     });

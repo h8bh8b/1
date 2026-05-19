@@ -1,15 +1,11 @@
 /**
  * GMGN Official OpenAPI - Google Sheets Integration
  *
- * ★ 최초 1회 설정 ★
- *   https://gmgn.ai/ai 에서 API Key 발급 후 아래에 입력
+ * ★ API KEY는 Config.gs 파일에서 설정하세요 ★
  *
  * 컬럼: A=Contract | B=이름 | C=티커 | D=MC | E=FDV
  *       F=24h거래량 | G=홀더 | H=유동성 | I=신규홀딩% | J=Token Age | K=체인 | L=시각
  */
-
-// ─── ★ API KEY (여기만 수정) ─────────────────────────────────────────────
-const GMGN_API_KEY = "여기에_API_KEY_붙여넣기";
 
 // ─── 공식 API 설정 ────────────────────────────────────────────────────────
 const GMGN_BASE = "https://openapi.gmgn.ai";  // 공식 OpenAPI 도메인

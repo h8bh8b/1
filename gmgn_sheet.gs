@@ -2,6 +2,12 @@
  * GMGN API - Google Sheets Integration
  * A열에 컨트랙트 주소 입력 시 토큰 정보를 자동으로 조회합니다.
  *
+ * ★ 최초 1회 설정 필요 ★
+ *   1. 크롬에서 gmgn.ai 접속
+ *   2. F12 → Application → Cookies → https://gmgn.ai
+ *   3. 아래 COOKIE 항목에 값 붙여넣기
+ *   (cf_clearance는 약 24시간마다 만료 → 재입력 필요)
+ *
  * 컬럼 구조:
  * A: Contract Address
  * B: 프로젝트 이름
@@ -15,6 +21,14 @@
  * J: 체인
  * K: 조회 시각
  */
+
+// ─── ★ 쿠키 설정 (여기만 수정하면 됩니다) ────────────────────────────────
+const COOKIE = {
+  cf_clearance : "여기에_cf_clearance_값_붙여넣기",
+  GMGN_LOCALE  : "en",   // 그대로 두세요
+  GMGN_CHAIN   : "sol",  // 그대로 두세요
+  GMGN_THEME   : "dark"  // 그대로 두세요
+};
 
 // ─── 설정 ──────────────────────────────────────────────────────────────────
 const HEADER_ROW    = 1;   // 헤더가 있는 행 번호
@@ -187,16 +201,21 @@ function fetchTokenInfo_(chains, address) {
     for (const url of endpoints) {
       try {
         Logger.log("Trying [" + chain + "]: " + url);
+        const cookieStr = Object.entries(COOKIE)
+          .map(([k, v]) => k + "=" + v)
+          .join("; ");
+
         const response = UrlFetchApp.fetch(url, {
           method: "GET",
           muteHttpExceptions: true,
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
+            "User-Agent"     : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept"         : "application/json, text/plain, */*",
             "Accept-Language": "en-US,en;q=0.9,ko;q=0.8",
-            "Referer": "https://gmgn.ai/",
-            "Origin": "https://gmgn.ai",
-            "Cache-Control": "no-cache"
+            "Referer"        : "https://gmgn.ai/",
+            "Origin"         : "https://gmgn.ai",
+            "Cache-Control"  : "no-cache",
+            "Cookie"         : cookieStr
           },
           followRedirects: true
         });

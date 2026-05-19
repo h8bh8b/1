@@ -143,19 +143,18 @@ function onOpen() {
 // ─── 내부: API 호출 및 셀 기입 ───────────────────────────────────────────
 function fetchAndFill_(sheet, row, contractAddress) {
   try {
-    // 로딩 표시
     sheet.getRange(row, COLUMNS.NAME).setValue("조회 중...");
     SpreadsheetApp.flush();
 
-    const chain    = detectChain_(contractAddress);
-    const tokenData = fetchTokenInfo_(chain, contractAddress);
+    const chains = detectChains_(contractAddress);
+    const result = fetchTokenInfo_(chains, contractAddress);
 
-    if (!tokenData) {
+    if (!result) {
       sheet.getRange(row, COLUMNS.NAME).setValue("⚠️ 데이터 없음");
       return;
     }
 
-    writeRowData_(sheet, row, chain, tokenData);
+    writeRowData_(sheet, row, result.chain, result.data);
 
   } catch (err) {
     sheet.getRange(row, COLUMNS.NAME).setValue("❌ 오류: " + err.message);
@@ -163,71 +162,73 @@ function fetchAndFill_(sheet, row, contractAddress) {
   }
 }
 
-// ─── 내부: 체인 자동 감지 ────────────────────────────────────────────────
-function detectChain_(address) {
-  // EVM 계열 (0x 시작, 42자)
+// ─── 내부: 시도할 체인 목록 반환 ─────────────────────────────────────────
+function detectChains_(address) {
+  // EVM (0x + 40 hex) → eth / bsc / base 순서로 모두 시도
   if (/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    return "eth"; // 기본 EVM → ETH (BSC/Base는 수동 지정 불가, 동일 포맷)
+    return ["eth", "bsc", "base"];
   }
-  // Tron (T 시작, 34자)
+  // Tron
   if (/^T[0-9a-zA-Z]{33}$/.test(address)) {
-    return "tron";
+    return ["tron"];
   }
   // Solana (Base58, 32~44자)
   if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-    return "sol";
+    return ["sol"];
   }
-  return "sol"; // 기본값
+  return ["sol"];
 }
 
-// ─── 내부: GMGN API 호출 ─────────────────────────────────────────────────
-function fetchTokenInfo_(chain, address) {
-  const endpoints = buildEndpoints_(chain, address);
+// ─── 내부: GMGN API 호출 (체인 자동 순회) ────────────────────────────────
+function fetchTokenInfo_(chains, address) {
+  for (const chain of chains) {
+    const endpoints = buildEndpoints_(chain, address);
 
-  for (const url of endpoints) {
-    try {
-      Logger.log("Trying: " + url);
-      const response = UrlFetchApp.fetch(url, {
-        method: "GET",
-        muteHttpExceptions: true,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "application/json, text/plain, */*",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Referer": "https://gmgn.ai/",
-          "Origin": "https://gmgn.ai"
-        },
-        followRedirects: true
-      });
+    for (const url of endpoints) {
+      try {
+        Logger.log("Trying [" + chain + "]: " + url);
+        const response = UrlFetchApp.fetch(url, {
+          method: "GET",
+          muteHttpExceptions: true,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9,ko;q=0.8",
+            "Referer": "https://gmgn.ai/",
+            "Origin": "https://gmgn.ai",
+            "Cache-Control": "no-cache"
+          },
+          followRedirects: true
+        });
 
-      const code = response.getResponseCode();
-      if (code !== 200) {
-        Logger.log("HTTP " + code + " for " + url);
-        continue;
+        const code = response.getResponseCode();
+        Logger.log("HTTP " + code + " [" + chain + "] " + url);
+        if (code !== 200) continue;
+
+        const raw  = response.getContentText();
+        Logger.log("Response [" + chain + "]: " + raw.substring(0, 300));
+
+        let json;
+        try { json = JSON.parse(raw); } catch(e) { continue; }
+
+        const data = extractTokenData_(json);
+        if (data && (data.name || data.symbol)) {
+          return { chain: chain, data: data };
+        }
+
+      } catch (err) {
+        Logger.log("Fetch error [" + chain + "] " + url + ": " + err.message);
       }
-
-      const raw = response.getContentText();
-      const json = JSON.parse(raw);
-
-      const data = extractTokenData_(json);
-      if (data) return data;
-
-    } catch (err) {
-      Logger.log("Fetch error for " + url + ": " + err.message);
     }
   }
-
   return null;
 }
 
 // ─── 내부: 시도할 엔드포인트 목록 ────────────────────────────────────────
 function buildEndpoints_(chain, address) {
   return [
-    // GMGN 공식 quotation API (토큰 상세)
     "https://gmgn.ai/defi/quotation/v1/tokens/" + chain + "/" + address,
-    // GMGN 공식 rank API (스왑 데이터 포함)
     "https://gmgn.ai/defi/quotation/v1/token_info/" + chain + "/" + address,
-    // 커뮤니티 문서화 엔드포인트
     "https://gmgn.ai/api/v1/token_stat/" + chain + "/" + address
   ];
 }

@@ -4,28 +4,29 @@
  * ★ API KEY는 Config.gs 파일에서 설정하세요 ★
  *
  * 컬럼: A=Contract | B=이름 | C=티커 | D=MC | E=FDV | F=24h거래량
- *       G=홀더 | H=유동성 | I=Token Age | J=체인 | K=Buy Tax | L=Sell Tax | M=DEX Tax | N=조회 시각
+ *       G=홀더 | H=유동성 | I=Fresh Wallet | J=Token Age | K=체인 | L=Buy Tax | M=Sell Tax | N=DEX Tax | O=조회 시각
  */
 
 const GMGN_BASE  = "https://openapi.gmgn.ai";
 const BATCH_SIZE = 50;
-const TOTAL_COLS = 13;   // B~N
+const TOTAL_COLS = 14;   // B~O
 
 const COLUMNS = {
-  CONTRACT   : 1,
-  NAME       : 2,
-  SYMBOL     : 3,
-  MARKET_CAP : 4,
-  FDV        : 5,
-  VOLUME_24H : 6,
-  HOLDERS    : 7,
-  LIQUIDITY  : 8,
-  TOKEN_AGE  : 9,
-  CHAIN      : 10,
-  BUY_TAX    : 11,
-  SELL_TAX   : 12,
-  DEX_TAX    : 13,
-  UPDATED_AT : 14
+  CONTRACT    : 1,
+  NAME        : 2,
+  SYMBOL      : 3,
+  MARKET_CAP  : 4,
+  FDV         : 5,
+  VOLUME_24H  : 6,
+  HOLDERS     : 7,
+  LIQUIDITY   : 8,
+  FRESH_WALLET: 9,
+  TOKEN_AGE   : 10,
+  CHAIN       : 11,
+  BUY_TAX     : 12,
+  SELL_TAX    : 13,
+  DEX_TAX     : 14,
+  UPDATED_AT  : 15
 };
 const HEADER_ROW     = 1;
 const DATA_START_ROW = 2;
@@ -140,11 +141,14 @@ function fetchBatch_(addresses) {
     r2Meta.push({ addrIdx, type: "kline" });
     r2Reqs.push(buildReq_("/v1/token/security", { chain, address: normAddr }));
     r2Meta.push({ addrIdx, type: "sec" });
+    r2Reqs.push(buildReq_("/v1/market/token_top_holders", { chain, address: normAddr, tag: "fresh_wallet" }));
+    r2Meta.push({ addrIdx, type: "fresh" });
   });
 
-  const poolObjs   = new Array(addresses.length).fill(null);
-  const vol24hArr  = new Array(addresses.length).fill(null);
-  const secObjs    = new Array(addresses.length).fill(undefined); // undefined: 미조회, null: 실패
+  const poolObjs    = new Array(addresses.length).fill(null);
+  const vol24hArr   = new Array(addresses.length).fill(null);
+  const secObjs     = new Array(addresses.length).fill(undefined); // undefined: 미조회, null: 실패
+  const freshPctArr = new Array(addresses.length).fill(null);
 
   if (r2Reqs.length) {
     UrlFetchApp.fetchAll(r2Reqs).forEach((res, i) => {
@@ -186,6 +190,17 @@ function fetchBatch_(addresses) {
         const obj = json.data || json;
         if (obj && typeof obj === "object") secObjs[addrIdx] = obj;
         else                                 secObjs[addrIdx] = null;
+
+      } else if (type === "fresh") {
+        const d = json.data ?? json;
+        const holders = Array.isArray(d) ? d : (Array.isArray(d?.holders) ? d.holders : (Array.isArray(d?.list) ? d.list : null));
+        if (holders && holders.length) {
+          const total = holders.reduce((sum, h) => {
+            const pct = parseFloat(h.amount_percentage ?? h.percentage ?? h.pct ?? 0);
+            return sum + (isNaN(pct) ? 0 : pct);
+          }, 0);
+          freshPctArr[addrIdx] = total;
+        }
       }
     });
   }
@@ -194,7 +209,7 @@ function fetchBatch_(addresses) {
     if (!addr || !infoObjs[addrIdx]) return null;
     return {
       chain: winningChains[addrIdx],
-      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx], secObjs[addrIdx])
+      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx], secObjs[addrIdx], freshPctArr[addrIdx])
     };
   });
 }
@@ -217,7 +232,8 @@ function querySingle_(address) {
   const r2Resps = UrlFetchApp.fetchAll([
     buildReq_("/v1/token/pool_info", { chain: winChain, address: normAddr }),
     buildReq_("/v1/market/token_kline", { chain: winChain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }),
-    buildReq_("/v1/token/security", { chain: winChain, address: normAddr })
+    buildReq_("/v1/token/security", { chain: winChain, address: normAddr }),
+    buildReq_("/v1/market/token_top_holders", { chain: winChain, address: normAddr, tag: "fresh_wallet" })
   ]);
 
   const poolObj = parseRes_(r2Resps[0]);
@@ -238,7 +254,20 @@ function querySingle_(address) {
     if (sj.code === 0 || sj.code === undefined) secObj = sj.data || sj;
   } catch(e) {}
 
-  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h, secObj) };
+  let freshPct = null;
+  try {
+    const fj = JSON.parse(r2Resps[3].getContentText());
+    const d  = fj.data ?? fj;
+    const holders = Array.isArray(d) ? d : (Array.isArray(d?.holders) ? d.holders : (Array.isArray(d?.list) ? d.list : null));
+    if (holders && holders.length) {
+      freshPct = holders.reduce((sum, h) => {
+        const pct = parseFloat(h.amount_percentage ?? h.percentage ?? h.pct ?? 0);
+        return sum + (isNaN(pct) ? 0 : pct);
+      }, 0);
+    }
+  } catch(e) {}
+
+  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h, secObj, freshPct) };
 }
 
 // ─── 공통: 요청 객체 생성 ────────────────────────────────────────────────
@@ -281,7 +310,7 @@ function normalizeAddress_(address) {
 }
 
 // ─── 응답 데이터 조합 ────────────────────────────────────────────────────
-function buildData_(info, pool, vol24hKline, sec) {
+function buildData_(info, pool, vol24hKline, sec, freshPct) {
   const price   = parseNum_(info?.price?.price ?? info?.price);
   const csupply = parseNum_(info?.circulating_supply);
   const tsupply = parseNum_(info?.total_supply);
@@ -309,18 +338,23 @@ function buildData_(info, pool, vol24hKline, sec) {
   // Tax: sec === undefined → 빈 칸(""), sec === null → 빈 칸(""), 필드 없음 → "-", 값 있음 → "X%"
   const tax = extractTaxes_(sec, info, poolItem);
 
+  const freshWallet = freshPct != null
+    ? (freshPct > 1 ? freshPct.toFixed(2) : (freshPct * 100).toFixed(2)) + "%"
+    : null;
+
   return {
-    name      : info?.name   || info?.token_name  || "",
-    symbol    : info?.symbol || info?.token_symbol || "",
-    marketCap : mc,
+    name        : info?.name   || info?.token_name  || "",
+    symbol      : info?.symbol || info?.token_symbol || "",
+    marketCap   : mc,
     fdv,
-    volume24h : vol,
+    volume24h   : vol,
     holders,
     liquidity,
-    tokenAge  : ts ? formatAge_(ts) : null,
-    buyTax    : tax.buy,
-    sellTax   : tax.sell,
-    dexTax    : tax.dex
+    freshWallet,
+    tokenAge    : ts ? formatAge_(ts) : null,
+    buyTax      : tax.buy,
+    sellTax     : tax.sell,
+    dexTax      : tax.dex
   };
 }
 
@@ -359,12 +393,13 @@ function buildRowArray_(chain, d) {
   return [
     d.name,
     d.symbol,
-    d.marketCap  ?? "N/A",
-    d.fdv        ?? "N/A",
-    d.volume24h  ?? "N/A",
-    d.holders    ?? "N/A",
-    d.liquidity  ?? "N/A",
-    d.tokenAge   ?? "N/A",
+    d.marketCap   ?? "N/A",
+    d.fdv         ?? "N/A",
+    d.volume24h   ?? "N/A",
+    d.holders     ?? "N/A",
+    d.liquidity   ?? "N/A",
+    d.freshWallet ?? "N/A",
+    d.tokenAge    ?? "N/A",
     chain.toUpperCase(),
     d.buyTax,
     d.sellTax,
@@ -397,7 +432,7 @@ function applyFormats_(sheet, row) {
 function setupHeaders() {
   const sheet = SpreadsheetApp.getActiveSheet();
   const h = ["Contract Address","프로젝트 이름","토큰 티커","MC ($)","FDV ($)",
-             "24h 거래량 ($)","홀더","유동성 ($)","Token Age","체인",
+             "24h 거래량 ($)","홀더","유동성 ($)","Fresh Wallet","Token Age","체인",
              "Buy Tax","Sell Tax","DEX Tax","조회 시각"];
   const r = sheet.getRange(1, 1, 1, h.length);
   r.setValues([h]).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e0e0e0");

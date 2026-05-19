@@ -104,11 +104,11 @@ function batchRefresh_(sheet, startRow, endRow) {
   }
 }
 
-// ─── 50개 병렬 fetchAll (2라운드) ────────────────────────────────────────
+// ─── 50개 병렬 fetchAll (3라운드) ────────────────────────────────────────
 function fetchBatch_(addresses) {
   // ── Round 1: token/info (모든 체인 동시 요청) ──────────────────────────
   const infoReqs = [];
-  const infoMeta = []; // { addrIdx, chain }
+  const infoMeta = [];
 
   addresses.forEach((addr, addrIdx) => {
     if (!addr) return;
@@ -118,40 +118,65 @@ function fetchBatch_(addresses) {
     });
   });
 
-  const infoObjs       = new Array(addresses.length).fill(null);
-  const winningChains  = new Array(addresses.length).fill(null);
+  const infoObjs      = new Array(addresses.length).fill(null);
+  const winningChains = new Array(addresses.length).fill(null);
 
   if (infoReqs.length) {
     UrlFetchApp.fetchAll(infoReqs).forEach((res, i) => {
       const { addrIdx, chain } = infoMeta[i];
-      if (infoObjs[addrIdx]) return;           // 이미 성공한 체인 있음
+      if (infoObjs[addrIdx]) return;
       const obj = parseRes_(res);
       if (obj) { infoObjs[addrIdx] = obj; winningChains[addrIdx] = chain; }
     });
   }
 
-  // ── Round 2: token/pool_info (성공한 체인만, 동시 요청) ───────────────
-  const poolReqs = [];
-  const poolMeta = []; // { addrIdx }
+  // ── Round 2: pool_info + kline (성공 체인만, 동시 요청) ──────────────
+  const r2Reqs = [];
+  const r2Meta = []; // { addrIdx, type: "pool"|"kline" }
+  const now24hAgo = Math.floor(Date.now() / 1000) - 86400;
+  const nowTs     = Math.floor(Date.now() / 1000);
 
   addresses.forEach((addr, addrIdx) => {
-    if (!addr || !winningChains[addrIdx]) return;
-    poolReqs.push(buildReq_("/v1/token/pool_info", { chain: winningChains[addrIdx], address: addr }));
-    poolMeta.push({ addrIdx });
+    const chain = winningChains[addrIdx];
+    if (!addr || !chain) return;
+    r2Reqs.push(buildReq_("/v1/token/pool_info", { chain, address: addr }));
+    r2Meta.push({ addrIdx, type: "pool" });
+    r2Reqs.push(buildReq_("/v1/market/token_kline", { chain, address: addr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }));
+    r2Meta.push({ addrIdx, type: "kline" });
   });
 
-  const poolObjs = new Array(addresses.length).fill(null);
-  if (poolReqs.length) {
-    UrlFetchApp.fetchAll(poolReqs).forEach((res, i) => {
-      const obj = parseRes_(res);
-      if (obj) poolObjs[poolMeta[i].addrIdx] = obj;
+  const poolObjs  = new Array(addresses.length).fill(null);
+  const vol24hArr = new Array(addresses.length).fill(null);
+
+  if (r2Reqs.length) {
+    UrlFetchApp.fetchAll(r2Reqs).forEach((res, i) => {
+      const { addrIdx, type } = r2Meta[i];
+      if (res.getResponseCode() !== 200) return;
+      let json;
+      try { json = JSON.parse(res.getContentText()); } catch(e) { return; }
+      if (json.code !== undefined && json.code !== 0) return;
+
+      if (type === "pool") {
+        const obj = json.data || json;
+        if (obj && typeof obj === "object") poolObjs[addrIdx] = obj;
+
+      } else if (type === "kline") {
+        // kline: { data: [ { time, open, high, low, close, volume }, ... ] }
+        const candles = json.data || json;
+        if (Array.isArray(candles) && candles.length) {
+          vol24hArr[addrIdx] = candles.reduce((sum, c) => sum + (parseFloat(c.volume) || 0), 0);
+        }
+      }
     });
   }
 
   // ── 결합 ──────────────────────────────────────────────────────────────
   return addresses.map((addr, addrIdx) => {
     if (!addr || !infoObjs[addrIdx]) return null;
-    return { chain: winningChains[addrIdx], data: buildData_(infoObjs[addrIdx], poolObjs[addrIdx]) };
+    return {
+      chain: winningChains[addrIdx],
+      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx])
+    };
   });
 }
 
@@ -168,9 +193,25 @@ function querySingle_(address) {
   }
   if (!infoObj) return null;
 
-  // Round 2: pool_info
-  const poolObj = parseRes_(UrlFetchApp.fetchAll([buildReq_("/v1/token/pool_info", { chain: winChain, address })])[0]);
-  return { chain: winChain, data: buildData_(infoObj, poolObj) };
+  // Round 2: pool_info + kline 동시 요청
+  const now24hAgo = Math.floor(Date.now() / 1000) - 86400;
+  const nowTs     = Math.floor(Date.now() / 1000);
+  const r2Resps = UrlFetchApp.fetchAll([
+    buildReq_("/v1/token/pool_info", { chain: winChain, address }),
+    buildReq_("/v1/market/token_kline", { chain: winChain, address, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 })
+  ]);
+
+  const poolObj = parseRes_(r2Resps[0]);
+  let vol24h = null;
+  try {
+    const kj = JSON.parse(r2Resps[1].getContentText());
+    const candles = kj.data || kj;
+    if (Array.isArray(candles) && candles.length) {
+      vol24h = candles.reduce((s, c) => s + (parseFloat(c.volume) || 0), 0);
+    }
+  } catch(e) {}
+
+  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h) };
 }
 
 // ─── 공통: 요청 객체 생성 ────────────────────────────────────────────────
@@ -211,7 +252,7 @@ function detectChains_(address) {
 }
 
 // ─── 응답 데이터 조합 ────────────────────────────────────────────────────
-function buildData_(info, pool) {
+function buildData_(info, pool, vol24hKline) {
   const price   = parseNum_(info?.price?.price ?? info?.price);
   const csupply = parseNum_(info?.circulating_supply);
   const tsupply = parseNum_(info?.total_supply);
@@ -221,12 +262,12 @@ function buildData_(info, pool) {
   const fdv = parseNum_(info?.fdv)
            ?? (price && tsupply ? price * tsupply : mc);
 
-  // pool_info 배열 구조 대응 (pools[0].volume_24h 등)
+  // pool_info 배열 구조 대응
   const poolItem = Array.isArray(pool) ? pool[0] : pool;
-  const vol = parseNum_(
-    poolItem?.volume_24h ?? poolItem?.volume ??
-    info?.volume_24h    ?? info?.volume
-  );
+
+  // 24h 거래량: kline 합산 > pool_info > token_info 순 우선
+  const vol = vol24hKline != null ? vol24hKline
+    : parseNum_(poolItem?.volume_24h ?? poolItem?.volume ?? info?.volume_24h ?? info?.volume);
 
   const holders   = parseNum_(info?.holder_count ?? info?.holders);
   const liquidity = parseNum_(info?.liquidity ?? poolItem?.liquidity);

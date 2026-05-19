@@ -3,13 +3,13 @@
  *
  * ★ API KEY는 Config.gs 파일에서 설정하세요 ★
  *
- * 컬럼: A=Contract | B=이름 | C=티커 | D=MC | E=FDV
- *       F=24h거래량 | G=홀더 | H=유동성 | I=신규홀딩% | J=Token Age | K=체인 | L=시각
+ * 컬럼: A=Contract | B=이름 | C=티커 | D=MC | E=FDV | F=24h거래량
+ *       G=홀더 | H=유동성 | I=Token Age | J=체인 | K=Buy Tax | L=Sell Tax | M=DEX Tax | N=조회 시각
  */
 
-const GMGN_BASE    = "https://openapi.gmgn.ai";
-const BATCH_SIZE   = 50;   // fetchAll 1회 최대 요청 수
-const TOTAL_COLS   = 11;   // B~L
+const GMGN_BASE  = "https://openapi.gmgn.ai";
+const BATCH_SIZE = 50;
+const TOTAL_COLS = 13;   // B~N
 
 const COLUMNS = {
   CONTRACT   : 1,
@@ -20,10 +20,12 @@ const COLUMNS = {
   VOLUME_24H : 6,
   HOLDERS    : 7,
   LIQUIDITY  : 8,
-  NEW_HOLDING: 9,
-  TOKEN_AGE  : 10,
-  CHAIN      : 11,
-  UPDATED_AT : 12
+  TOKEN_AGE  : 9,
+  CHAIN      : 10,
+  BUY_TAX    : 11,
+  SELL_TAX   : 12,
+  DEX_TAX    : 13,
+  UPDATED_AT : 14
 };
 const HEADER_ROW     = 1;
 const DATA_START_ROW = 2;
@@ -54,9 +56,7 @@ function onEdit(e) {
 function refreshSelected() {
   const sheet = SpreadsheetApp.getActiveSheet();
   const sel   = sheet.getActiveRange();
-  const start = Math.max(sel.getRow(), DATA_START_ROW);
-  const end   = sel.getLastRow();
-  batchRefresh_(sheet, start, end);
+  batchRefresh_(sheet, Math.max(sel.getRow(), DATA_START_ROW), sel.getLastRow());
 }
 
 // ─── 수동: 전체 새로고침 ─────────────────────────────────────────────────
@@ -70,26 +70,20 @@ function batchRefresh_(sheet, startRow, endRow) {
   if (endRow < startRow) return;
   const count = endRow - startRow + 1;
 
-  // 주소 일괄 읽기
   const addresses = sheet.getRange(startRow, 1, count, 1)
     .getValues().map(r => r[0].toString().trim());
 
-  // 로딩 상태 한 번에 표시
-  const loadingCol = COLUMNS.NAME;
   const loadingData = addresses.map(a => [a ? "조회 중..." : ""]);
-  sheet.getRange(startRow, loadingCol, count, 1).setValues(loadingData);
+  sheet.getRange(startRow, COLUMNS.NAME, count, 1).setValues(loadingData);
   SpreadsheetApp.flush();
 
-  // 50개 단위 청크로 병렬 처리
   const resultRows = new Array(count).fill(null);
-
   for (let i = 0; i < count; i += BATCH_SIZE) {
     const chunk        = addresses.slice(i, i + BATCH_SIZE);
     const chunkResults = fetchBatch_(chunk);
     chunkResults.forEach((r, j) => resultRows[i + j] = r);
   }
 
-  // 결과 일괄 쓰기
   const outputValues = resultRows.map((r, i) => {
     if (!addresses[i]) return new Array(TOTAL_COLS).fill("");
     if (!r) return ["⚠️ 데이터 없음", ...new Array(TOTAL_COLS - 1).fill("")];
@@ -98,13 +92,12 @@ function batchRefresh_(sheet, startRow, endRow) {
 
   sheet.getRange(startRow, COLUMNS.NAME, count, TOTAL_COLS).setValues(outputValues);
 
-  // 숫자 포맷 일괄 적용
   for (let row = startRow; row <= endRow; row++) {
     if (addresses[row - startRow]) applyFormats_(sheet, row);
   }
 }
 
-// ─── 50개 병렬 fetchAll (3라운드) ────────────────────────────────────────
+// ─── 50개 병렬 fetchAll (2라운드) ────────────────────────────────────────
 function fetchBatch_(addresses) {
   // ── Round 1: token/info (모든 체인 동시 요청) ──────────────────────────
   const infoReqs = [];
@@ -131,9 +124,9 @@ function fetchBatch_(addresses) {
     });
   }
 
-  // ── Round 2: pool_info + kline (성공 체인만, 동시 요청) ──────────────
+  // ── Round 2: pool_info + kline + security (성공 체인만, 동시 요청) ────
   const r2Reqs = [];
-  const r2Meta = []; // { addrIdx, type: "pool"|"kline" }
+  const r2Meta = [];
   const now24hAgo = Math.floor(Date.now() / 1000) - 86400;
   const nowTs     = Math.floor(Date.now() / 1000);
 
@@ -145,73 +138,63 @@ function fetchBatch_(addresses) {
     r2Meta.push({ addrIdx, type: "pool" });
     r2Reqs.push(buildReq_("/v1/market/token_kline", { chain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }));
     r2Meta.push({ addrIdx, type: "kline" });
-    r2Reqs.push(buildReq_("/v1/market/token_top_holders", { chain, address: normAddr, tag: "fresh_wallet", limit: 100 }));
-    r2Meta.push({ addrIdx, type: "fresh" });
+    r2Reqs.push(buildReq_("/v1/token/security", { chain, address: normAddr }));
+    r2Meta.push({ addrIdx, type: "sec" });
   });
 
   const poolObjs   = new Array(addresses.length).fill(null);
   const vol24hArr  = new Array(addresses.length).fill(null);
-  const freshPctArr = new Array(addresses.length).fill(null);
+  const secObjs    = new Array(addresses.length).fill(undefined); // undefined: 미조회, null: 실패
 
   if (r2Reqs.length) {
     UrlFetchApp.fetchAll(r2Reqs).forEach((res, i) => {
       const { addrIdx, type } = r2Meta[i];
-      if (res.getResponseCode() !== 200) return;
+      if (res.getResponseCode() !== 200) {
+        if (type === "sec") secObjs[addrIdx] = null;
+        return;
+      }
       let json;
-      try { json = JSON.parse(res.getContentText()); } catch(e) { return; }
-      if (json.code !== undefined && json.code !== 0) return;
+      try { json = JSON.parse(res.getContentText()); } catch(e) {
+        if (type === "sec") secObjs[addrIdx] = null;
+        return;
+      }
+      if (json.code !== undefined && json.code !== 0) {
+        if (type === "sec") secObjs[addrIdx] = null;
+        return;
+      }
 
       if (type === "pool") {
         const obj = json.data || json;
         if (obj && typeof obj === "object") poolObjs[addrIdx] = obj;
 
       } else if (type === "kline") {
-        // kline 응답 구조 후보: data[] / data.list[] / data.candles[] / data.kline[]
         const d = json.data ?? json;
         let candles = null;
-        if (Array.isArray(d))                  candles = d;
-        else if (Array.isArray(d?.list))       candles = d.list;
-        else if (Array.isArray(d?.candles))    candles = d.candles;
-        else if (Array.isArray(d?.kline))      candles = d.kline;
-        else if (Array.isArray(d?.klines))     candles = d.klines;
-
+        if (Array.isArray(d))               candles = d;
+        else if (Array.isArray(d?.list))    candles = d.list;
+        else if (Array.isArray(d?.candles)) candles = d.candles;
+        else if (Array.isArray(d?.kline))   candles = d.kline;
+        else if (Array.isArray(d?.klines))  candles = d.klines;
         if (candles && candles.length) {
           vol24hArr[addrIdx] = candles.reduce((sum, c) => {
             const v = parseFloat(c.volume ?? c.vol ?? c.volume_usd ?? 0);
             return sum + (isNaN(v) ? 0 : v);
           }, 0);
-        } else {
-          Logger.log("kline 응답 구조 미확인: " + JSON.stringify(json).substring(0, 300));
         }
 
-      } else if (type === "fresh") {
-        // top_holders?tag=fresh_wallet → holders[].amount_percentage 합산
-        const d = json.data ?? json;
-        let holders = null;
-        if (Array.isArray(d))               holders = d;
-        else if (Array.isArray(d?.list))    holders = d.list;
-        else if (Array.isArray(d?.holders)) holders = d.holders;
-
-        if (holders) {
-          const sumPct = holders.reduce((s, h) => {
-            const p = parseFloat(h.amount_percentage ?? h.percentage ?? h.amount_rate ?? 0);
-            return s + (isNaN(p) ? 0 : p);
-          }, 0);
-          // amount_percentage가 0~1 소수 vs 0~100 % 구분
-          freshPctArr[addrIdx] = sumPct > 1 ? sumPct : sumPct * 100;
-        } else {
-          Logger.log("fresh holders 응답 구조 미확인: " + JSON.stringify(json).substring(0, 300));
-        }
+      } else if (type === "sec") {
+        const obj = json.data || json;
+        if (obj && typeof obj === "object") secObjs[addrIdx] = obj;
+        else                                 secObjs[addrIdx] = null;
       }
     });
   }
 
-  // ── 결합 ──────────────────────────────────────────────────────────────
   return addresses.map((addr, addrIdx) => {
     if (!addr || !infoObjs[addrIdx]) return null;
     return {
       chain: winningChains[addrIdx],
-      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx], freshPctArr[addrIdx])
+      data : buildData_(infoObjs[addrIdx], poolObjs[addrIdx], vol24hArr[addrIdx], secObjs[addrIdx])
     };
   });
 }
@@ -221,7 +204,6 @@ function querySingle_(address) {
   const chains    = detectChains_(address);
   const normAddr  = normalizeAddress_(address);
 
-  // Round 1: token/info 동시 요청
   const infoResps = UrlFetchApp.fetchAll(chains.map(c => buildReq_("/v1/token/info", { chain: c, address: normAddr })));
   let winChain = null, infoObj = null;
   for (let i = 0; i < infoResps.length; i++) {
@@ -230,13 +212,12 @@ function querySingle_(address) {
   }
   if (!infoObj) return null;
 
-  // Round 2: pool_info + kline + fresh holders 동시 요청
   const now24hAgo = Math.floor(Date.now() / 1000) - 86400;
   const nowTs     = Math.floor(Date.now() / 1000);
   const r2Resps = UrlFetchApp.fetchAll([
     buildReq_("/v1/token/pool_info", { chain: winChain, address: normAddr }),
     buildReq_("/v1/market/token_kline", { chain: winChain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }),
-    buildReq_("/v1/market/token_top_holders", { chain: winChain, address: normAddr, tag: "fresh_wallet", limit: 100 })
+    buildReq_("/v1/token/security", { chain: winChain, address: normAddr })
   ]);
 
   const poolObj = parseRes_(r2Resps[0]);
@@ -245,24 +226,19 @@ function querySingle_(address) {
   try {
     const kj = JSON.parse(r2Resps[1].getContentText());
     const d  = kj.data ?? kj;
-    let candles = Array.isArray(d) ? d : (d?.list || d?.candles || d?.kline || d?.klines);
+    const candles = Array.isArray(d) ? d : (d?.list || d?.candles || d?.kline || d?.klines);
     if (Array.isArray(candles) && candles.length) {
       vol24h = candles.reduce((s, c) => s + (parseFloat(c.volume ?? c.vol ?? 0) || 0), 0);
     }
   } catch(e) {}
 
-  let freshPct = null;
+  let secObj = null;
   try {
-    const fj = JSON.parse(r2Resps[2].getContentText());
-    const d  = fj.data ?? fj;
-    let holders = Array.isArray(d) ? d : (d?.list || d?.holders);
-    if (Array.isArray(holders)) {
-      const sum = holders.reduce((s, h) => s + (parseFloat(h.amount_percentage ?? h.percentage ?? 0) || 0), 0);
-      freshPct = sum > 1 ? sum : sum * 100;
-    }
+    const sj = JSON.parse(r2Resps[2].getContentText());
+    if (sj.code === 0 || sj.code === undefined) secObj = sj.data || sj;
   } catch(e) {}
 
-  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h, freshPct) };
+  return { chain: winChain, data: buildData_(infoObj, poolObj, vol24h, secObj) };
 }
 
 // ─── 공통: 요청 객체 생성 ────────────────────────────────────────────────
@@ -279,7 +255,7 @@ function buildReq_(path, params) {
   };
 }
 
-// ─── 공통: 응답 파싱 + 유효 데이터 확인 ─────────────────────────────────
+// ─── 공통: 응답 파싱 + 유효성 확인 ───────────────────────────────────────
 function parseRes_(res) {
   if (res.getResponseCode() !== 200) return null;
   let json;
@@ -287,7 +263,6 @@ function parseRes_(res) {
   if (json.code !== undefined && json.code !== 0) return null;
   const obj = json.data || json;
   if (!obj || typeof obj !== "object") return null;
-  // 실제 토큰 데이터가 있는지 확인 (빈 응답 거부)
   const hasData = obj.name || obj.symbol ||
                   (obj.holder_count > 0) ||
                   (parseFloat(obj.liquidity) > 0) ||
@@ -295,20 +270,18 @@ function parseRes_(res) {
   return hasData ? obj : null;
 }
 
-// ─── 체인 후보 목록 ──────────────────────────────────────────────────────
+// ─── 체인 감지 / 주소 정규화 ─────────────────────────────────────────────
 function detectChains_(address) {
   if (/^0x[0-9a-fA-F]{40}$/.test(address)) return ["eth", "bsc", "base"];
   if (/^T[0-9a-zA-Z]{33}$/.test(address))  return ["tron"];
   return ["sol"];
 }
-
-// ─── 주소 정규화 (EVM → 소문자, SOL → 그대로) ────────────────────────────
 function normalizeAddress_(address) {
   return /^0x/.test(address) ? address.toLowerCase() : address;
 }
 
 // ─── 응답 데이터 조합 ────────────────────────────────────────────────────
-function buildData_(info, pool, vol24hKline, freshPct) {
+function buildData_(info, pool, vol24hKline, sec) {
   const price   = parseNum_(info?.price?.price ?? info?.price);
   const csupply = parseNum_(info?.circulating_supply);
   const tsupply = parseNum_(info?.total_supply);
@@ -318,37 +291,23 @@ function buildData_(info, pool, vol24hKline, freshPct) {
   const fdv = parseNum_(info?.fdv)
            ?? (price && tsupply ? price * tsupply : mc);
 
-  // pool_info 배열 구조 대응
   const poolItem = Array.isArray(pool) ? pool[0] : pool;
 
-  // 24h 거래량: kline 합산 > pool_info > token_info 순 우선
   const vol = vol24hKline != null ? vol24hKline
     : parseNum_(poolItem?.volume_24h ?? poolItem?.volume ?? info?.volume_24h ?? info?.volume);
 
   const holders   = parseNum_(info?.holder_count ?? info?.holders);
   const liquidity = parseNum_(info?.liquidity ?? poolItem?.liquidity);
 
-  // 신규 홀딩 %: top_holders 합산값 우선
-  let newHolding = freshPct;
-  if (newHolding == null) {
-    for (const v of [info?.fresh_wallet_rate, poolItem?.fresh_wallet_rate,
-                     info?.new_holder_ratio,  info?.new_holder_6h_ratio,
-                     info?.new_holder_1h_ratio]) {
-      if (v != null && !isNaN(parseFloat(v))) {
-        const n = parseFloat(v);
-        newHolding = n > 1 ? n : n * 100;
-        break;
-      }
-    }
-  }
-
-  // Token Age: pool 정보의 풀 생성 시각도 후보에 포함
   const ts = parseNum_(
     info?.open_timestamp           ?? info?.creation_timestamp     ?? info?.created_timestamp ??
     info?.create_timestamp         ?? info?.launch_timestamp       ?? info?.pool_creation_timestamp ??
     poolItem?.open_timestamp       ?? poolItem?.creation_timestamp ?? poolItem?.pool_creation_timestamp ??
     poolItem?.create_timestamp     ?? poolItem?.created_timestamp  ?? poolItem?.created_at
   );
+
+  // Tax: sec === undefined → 빈 칸(""), sec === null → 빈 칸(""), 필드 없음 → "-", 값 있음 → "X%"
+  const tax = extractTaxes_(sec, info, poolItem);
 
   return {
     name      : info?.name   || info?.token_name  || "",
@@ -358,9 +317,40 @@ function buildData_(info, pool, vol24hKline, freshPct) {
     volume24h : vol,
     holders,
     liquidity,
-    newHolding,
-    tokenAge  : ts ? formatAge_(ts) : null
+    tokenAge  : ts ? formatAge_(ts) : null,
+    buyTax    : tax.buy,
+    sellTax   : tax.sell,
+    dexTax    : tax.dex
   };
+}
+
+// ─── Tax 추출 ────────────────────────────────────────────────────────────
+// 반환값: 빈 문자열("") = 불러올 수 없음, "-" = 필드 없음(과세 없음), "X%" = 값 있음
+function extractTaxes_(sec, info, poolItem) {
+  // security 응답이 아예 없으면 모두 빈 칸
+  if (sec === null || sec === undefined) return { buy: "", sell: "", dex: "" };
+
+  const sources = [sec, info, poolItem].filter(o => o && typeof o === "object");
+
+  return {
+    buy : pickTax_(sources, ["buy_tax", "buyTax", "buy_fee"]),
+    sell: pickTax_(sources, ["sell_tax", "sellTax", "sell_fee"]),
+    dex : pickTax_(sources, ["dex_tax", "dexTax", "transfer_tax", "transferTax", "dex_fee"])
+  };
+}
+function pickTax_(sources, keys) {
+  for (const src of sources) {
+    for (const k of keys) {
+      const v = src[k];
+      if (v !== null && v !== undefined && v !== "") {
+        const n = parseFloat(v);
+        if (isNaN(n)) continue;
+        if (n === 0) return "-";
+        return (n > 1 ? n : n * 100).toFixed(2) + "%";
+      }
+    }
+  }
+  return "-";  // 필드 자체가 없으면 과세 없음 표시
 }
 
 // ─── 행 배열 생성 ─────────────────────────────────────────────────────────
@@ -374,9 +364,11 @@ function buildRowArray_(chain, d) {
     d.volume24h  ?? "N/A",
     d.holders    ?? "N/A",
     d.liquidity  ?? "N/A",
-    d.newHolding != null ? d.newHolding.toFixed(2) + "%" : "N/A",
     d.tokenAge   ?? "N/A",
     chain.toUpperCase(),
+    d.buyTax,
+    d.sellTax,
+    d.dexTax,
     now
   ];
 }
@@ -405,7 +397,8 @@ function applyFormats_(sheet, row) {
 function setupHeaders() {
   const sheet = SpreadsheetApp.getActiveSheet();
   const h = ["Contract Address","프로젝트 이름","토큰 티커","MC ($)","FDV ($)",
-             "24h 거래량 ($)","홀더","유동성 ($)","신규 홀딩 %","Token Age","체인","조회 시각"];
+             "24h 거래량 ($)","홀더","유동성 ($)","Token Age","체인",
+             "Buy Tax","Sell Tax","DEX Tax","조회 시각"];
   const r = sheet.getRange(1, 1, 1, h.length);
   r.setValues([h]).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#e0e0e0");
   sheet.setFrozenRows(1);

@@ -112,8 +112,9 @@ function fetchBatch_(addresses) {
 
   addresses.forEach((addr, addrIdx) => {
     if (!addr) return;
+    const normAddr = normalizeAddress_(addr);
     detectChains_(addr).forEach(chain => {
-      infoReqs.push(buildReq_("/v1/token/info", { chain, address: addr }));
+      infoReqs.push(buildReq_("/v1/token/info", { chain, address: normAddr }));
       infoMeta.push({ addrIdx, chain });
     });
   });
@@ -139,9 +140,10 @@ function fetchBatch_(addresses) {
   addresses.forEach((addr, addrIdx) => {
     const chain = winningChains[addrIdx];
     if (!addr || !chain) return;
-    r2Reqs.push(buildReq_("/v1/token/pool_info", { chain, address: addr }));
+    const normAddr = normalizeAddress_(addr);
+    r2Reqs.push(buildReq_("/v1/token/pool_info", { chain, address: normAddr }));
     r2Meta.push({ addrIdx, type: "pool" });
-    r2Reqs.push(buildReq_("/v1/market/token_kline", { chain, address: addr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }));
+    r2Reqs.push(buildReq_("/v1/market/token_kline", { chain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 }));
     r2Meta.push({ addrIdx, type: "kline" });
   });
 
@@ -182,10 +184,11 @@ function fetchBatch_(addresses) {
 
 // ─── 단일 주소 조회 (onEdit용) ────────────────────────────────────────────
 function querySingle_(address) {
-  const chains = detectChains_(address);
+  const chains    = detectChains_(address);
+  const normAddr  = normalizeAddress_(address);
 
   // Round 1: token/info 동시 요청
-  const infoResps = UrlFetchApp.fetchAll(chains.map(c => buildReq_("/v1/token/info", { chain: c, address })));
+  const infoResps = UrlFetchApp.fetchAll(chains.map(c => buildReq_("/v1/token/info", { chain: c, address: normAddr })));
   let winChain = null, infoObj = null;
   for (let i = 0; i < infoResps.length; i++) {
     const obj = parseRes_(infoResps[i]);
@@ -197,8 +200,8 @@ function querySingle_(address) {
   const now24hAgo = Math.floor(Date.now() / 1000) - 86400;
   const nowTs     = Math.floor(Date.now() / 1000);
   const r2Resps = UrlFetchApp.fetchAll([
-    buildReq_("/v1/token/pool_info", { chain: winChain, address }),
-    buildReq_("/v1/market/token_kline", { chain: winChain, address, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 })
+    buildReq_("/v1/token/pool_info", { chain: winChain, address: normAddr }),
+    buildReq_("/v1/market/token_kline", { chain: winChain, address: normAddr, resolution: "1h", from: now24hAgo * 1000, to: nowTs * 1000 })
   ]);
 
   const poolObj = parseRes_(r2Resps[0]);
@@ -249,6 +252,11 @@ function detectChains_(address) {
   if (/^0x[0-9a-fA-F]{40}$/.test(address)) return ["eth", "bsc", "base"];
   if (/^T[0-9a-zA-Z]{33}$/.test(address))  return ["tron"];
   return ["sol"];
+}
+
+// ─── 주소 정규화 (EVM → 소문자, SOL → 그대로) ────────────────────────────
+function normalizeAddress_(address) {
+  return /^0x/.test(address) ? address.toLowerCase() : address;
 }
 
 // ─── 응답 데이터 조합 ────────────────────────────────────────────────────

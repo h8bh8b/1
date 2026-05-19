@@ -104,88 +104,98 @@ function batchRefresh_(sheet, startRow, endRow) {
   }
 }
 
-// ─── 50개 병렬 fetchAll ───────────────────────────────────────────────────
+// ─── 50개 병렬 fetchAll (2라운드) ────────────────────────────────────────
 function fetchBatch_(addresses) {
-  // 각 주소 → 체인별 요청 생성
-  const allRequests = [];
-  const reqMeta     = []; // { addrIdx, chain }
+  // ── Round 1: token/info (모든 체인 동시 요청) ──────────────────────────
+  const infoReqs = [];
+  const infoMeta = []; // { addrIdx, chain }
 
   addresses.forEach((addr, addrIdx) => {
     if (!addr) return;
     detectChains_(addr).forEach(chain => {
-      const ts  = Math.floor(Date.now() / 1000);
-      const cid = Utilities.getUuid();
-      const qs  = `chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(addr)}&timestamp=${ts}&client_id=${cid}`;
-      allRequests.push({
-        url            : `${GMGN_BASE}/v1/token/info?${qs}`,
-        method         : "GET",
-        muteHttpExceptions: true,
-        headers        : {
-          "X-APIKEY"    : GMGN_API_KEY,
-          "Content-Type": "application/json",
-          "User-Agent"  : "gmgn-cli/1.3.2"
-        }
-      });
-      reqMeta.push({ addrIdx, chain });
+      infoReqs.push(buildReq_("/v1/token/info", { chain, address: addr }));
+      infoMeta.push({ addrIdx, chain });
     });
   });
 
-  if (!allRequests.length) return new Array(addresses.length).fill(null);
+  const infoObjs       = new Array(addresses.length).fill(null);
+  const winningChains  = new Array(addresses.length).fill(null);
 
-  // 병렬 실행
-  const responses = UrlFetchApp.fetchAll(allRequests);
-  const results   = new Array(addresses.length).fill(null);
+  if (infoReqs.length) {
+    UrlFetchApp.fetchAll(infoReqs).forEach((res, i) => {
+      const { addrIdx, chain } = infoMeta[i];
+      if (infoObjs[addrIdx]) return;           // 이미 성공한 체인 있음
+      const obj = parseRes_(res);
+      if (obj) { infoObjs[addrIdx] = obj; winningChains[addrIdx] = chain; }
+    });
+  }
 
-  responses.forEach((res, i) => {
-    const { addrIdx, chain } = reqMeta[i];
-    if (results[addrIdx]) return; // 이미 성공한 체인 있음
+  // ── Round 2: token/pool_info (성공한 체인만, 동시 요청) ───────────────
+  const poolReqs = [];
+  const poolMeta = []; // { addrIdx }
 
-    if (res.getResponseCode() !== 200) return;
-    let json;
-    try { json = JSON.parse(res.getContentText()); } catch(e) { return; }
-    if (json.code !== undefined && json.code !== 0) return;
-
-    const obj = json.data || json;
-    if (obj && typeof obj === "object" && (obj.name || obj.symbol || obj.holder_count || obj.liquidity)) {
-      results[addrIdx] = { chain, data: buildData_(obj, null) };
-    }
+  addresses.forEach((addr, addrIdx) => {
+    if (!addr || !winningChains[addrIdx]) return;
+    poolReqs.push(buildReq_("/v1/token/pool_info", { chain: winningChains[addrIdx], address: addr }));
+    poolMeta.push({ addrIdx });
   });
 
-  return results;
+  const poolObjs = new Array(addresses.length).fill(null);
+  if (poolReqs.length) {
+    UrlFetchApp.fetchAll(poolReqs).forEach((res, i) => {
+      const obj = parseRes_(res);
+      if (obj) poolObjs[poolMeta[i].addrIdx] = obj;
+    });
+  }
+
+  // ── 결합 ──────────────────────────────────────────────────────────────
+  return addresses.map((addr, addrIdx) => {
+    if (!addr || !infoObjs[addrIdx]) return null;
+    return { chain: winningChains[addrIdx], data: buildData_(infoObjs[addrIdx], poolObjs[addrIdx]) };
+  });
 }
 
 // ─── 단일 주소 조회 (onEdit용) ────────────────────────────────────────────
 function querySingle_(address) {
   const chains = detectChains_(address);
-  const requests = chains.map(chain => {
-    const ts  = Math.floor(Date.now() / 1000);
-    const cid = Utilities.getUuid();
-    const qs  = `chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}&timestamp=${ts}&client_id=${cid}`;
-    return {
-      url: `${GMGN_BASE}/v1/token/info?${qs}`,
-      method: "GET",
-      muteHttpExceptions: true,
-      headers: {
-        "X-APIKEY"    : GMGN_API_KEY,
-        "Content-Type": "application/json",
-        "User-Agent"  : "gmgn-cli/1.3.2"
-      }
-    };
-  });
 
-  const responses = UrlFetchApp.fetchAll(requests);
-  for (let i = 0; i < responses.length; i++) {
-    const res = responses[i];
-    if (res.getResponseCode() !== 200) continue;
-    let json;
-    try { json = JSON.parse(res.getContentText()); } catch(e) { continue; }
-    if (json.code !== undefined && json.code !== 0) continue;
-    const obj = json.data || json;
-    if (obj && (obj.name || obj.symbol || obj.holder_count || obj.liquidity)) {
-      return { chain: chains[i], data: buildData_(obj, null) };
-    }
+  // Round 1: token/info 동시 요청
+  const infoResps = UrlFetchApp.fetchAll(chains.map(c => buildReq_("/v1/token/info", { chain: c, address })));
+  let winChain = null, infoObj = null;
+  for (let i = 0; i < infoResps.length; i++) {
+    const obj = parseRes_(infoResps[i]);
+    if (obj) { infoObj = obj; winChain = chains[i]; break; }
   }
-  return null;
+  if (!infoObj) return null;
+
+  // Round 2: pool_info
+  const poolObj = parseRes_(UrlFetchApp.fetchAll([buildReq_("/v1/token/pool_info", { chain: winChain, address })])[0]);
+  return { chain: winChain, data: buildData_(infoObj, poolObj) };
+}
+
+// ─── 공통: 요청 객체 생성 ────────────────────────────────────────────────
+function buildReq_(path, params) {
+  const ts  = Math.floor(Date.now() / 1000);
+  const cid = Utilities.getUuid();
+  const qs  = Object.entries(Object.assign({}, params, { timestamp: ts, client_id: cid }))
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  return {
+    url: `${GMGN_BASE}${path}?${qs}`,
+    method: "GET",
+    muteHttpExceptions: true,
+    headers: { "X-APIKEY": GMGN_API_KEY, "Content-Type": "application/json", "User-Agent": "gmgn-cli/1.3.2" }
+  };
+}
+
+// ─── 공통: 응답 파싱 ─────────────────────────────────────────────────────
+function parseRes_(res) {
+  if (res.getResponseCode() !== 200) return null;
+  let json;
+  try { json = JSON.parse(res.getContentText()); } catch(e) { return null; }
+  if (json.code !== undefined && json.code !== 0) return null;
+  const obj = json.data || json;
+  if (!obj || typeof obj !== "object") return null;
+  return obj;
 }
 
 // ─── 체인 후보 목록 ──────────────────────────────────────────────────────
@@ -206,17 +216,20 @@ function buildData_(info, pool) {
   const fdv = parseNum_(info?.fdv)
            ?? (price && tsupply ? price * tsupply : mc);
 
+  // pool_info 배열 구조 대응 (pools[0].volume_24h 등)
+  const poolItem = Array.isArray(pool) ? pool[0] : pool;
   const vol = parseNum_(
-    pool?.volume_24h ?? pool?.volume ?? info?.volume_24h ?? info?.volume
+    poolItem?.volume_24h ?? poolItem?.volume ??
+    info?.volume_24h    ?? info?.volume
   );
 
   const holders   = parseNum_(info?.holder_count ?? info?.holders);
-  const liquidity = parseNum_(info?.liquidity ?? pool?.liquidity);
+  const liquidity = parseNum_(info?.liquidity ?? poolItem?.liquidity);
 
   // 신규 홀딩 %: fresh_wallet_rate (공식 필드)
   let newHolding = null;
-  for (const v of [info?.fresh_wallet_rate, pool?.fresh_wallet_rate,
-                   info?.new_holder_ratio, info?.new_holder_6h_ratio,
+  for (const v of [info?.fresh_wallet_rate, poolItem?.fresh_wallet_rate,
+                   info?.new_holder_ratio,  info?.new_holder_6h_ratio,
                    info?.new_holder_1h_ratio]) {
     if (v != null && !isNaN(parseFloat(v))) {
       const n = parseFloat(v);
@@ -228,7 +241,10 @@ function buildData_(info, pool) {
     newHolding = (info.new_holder_count / info.holder_count) * 100;
   }
 
-  const ts = parseNum_(info?.open_timestamp ?? info?.creation_timestamp ?? info?.created_timestamp);
+  const ts = parseNum_(
+    info?.open_timestamp      ?? info?.creation_timestamp ?? info?.created_timestamp ??
+    poolItem?.open_timestamp  ?? poolItem?.creation_timestamp
+  );
 
   return {
     name      : info?.name   || info?.token_name  || "",

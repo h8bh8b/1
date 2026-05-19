@@ -187,7 +187,7 @@ function buildReq_(path, params) {
   };
 }
 
-// ─── 공통: 응답 파싱 ─────────────────────────────────────────────────────
+// ─── 공통: 응답 파싱 + 유효 데이터 확인 ─────────────────────────────────
 function parseRes_(res) {
   if (res.getResponseCode() !== 200) return null;
   let json;
@@ -195,7 +195,12 @@ function parseRes_(res) {
   if (json.code !== undefined && json.code !== 0) return null;
   const obj = json.data || json;
   if (!obj || typeof obj !== "object") return null;
-  return obj;
+  // 실제 토큰 데이터가 있는지 확인 (빈 응답 거부)
+  const hasData = obj.name || obj.symbol ||
+                  (obj.holder_count > 0) ||
+                  (parseFloat(obj.liquidity) > 0) ||
+                  (parseFloat(obj.market_cap) > 0);
+  return hasData ? obj : null;
 }
 
 // ─── 체인 후보 목록 ──────────────────────────────────────────────────────
